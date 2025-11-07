@@ -2,6 +2,98 @@
 
 README for Credit Card Maximizer
 
+read the following for proper instructions:
+
+Install Node.js, python 3.11+, expo cli (for react native), expo go on phone
+
+# Create virtual environment
+python -m venv venv
+
+# Activate it:
+# Windows:
+venv\Scripts\activate
+
+# Mac/Linux:
+source venv/bin/activate
+
+# You should see (venv) in your terminal prompt
+
+
+pip install -r requirements.txt
+
+# This will take 2-3 minutes
+# You should see packages installing
+
+
+Setting up frontend (react native)
+
+# Open a NEW terminal window
+# Navigate to the frontend folder
+cd ~/Desktop/agentic-wallet/frontend  # Adjust path as needed
+
+# Create new Expo app
+npx create-expo-app@latest .
+
+# Install navigation libraries
+npm install @react-navigation/native @react-navigation/bottom-tabs @react-navigation/stack
+
+# Install Expo dependencies
+npx expo install react-native-screens react-native-safe-area-context
+
+# Install other libraries
+npm install axios
+npm install react-native-vector-icons
+npm install @react-native-async-storage/async-storage
+npm install react-native-chart-kit react-native-svg
+
+# This will take 5-7 minutes
+
+
+
+to start backend:
+# Start the server
+uvicorn main:app --reload --host 0.0.0.0 --port 8000
+
+starting frontend:
+- go to frontend directory
+- run "npx expo start --tunnel" ( i personally use the tunnel flag since it's the only way it works for me)
+- scan qr code and open with expo go.
+
+
+In order to connect backend to frontend, use local tunnel:
+
+npm install -g localtunnel
+
+lt --port 8000
+
+copy the generated url and paste it into api.js
+
+(any time you need to reload expo go just shake your phone and it should prompt you)
+
+
+---INSTRUCTIONS OVER----
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 # 🚀 Agentic Wallet - AI-Powered Credit Card Optimizer
 
 An intelligent mobile app that uses AI to recommend the optimal credit card for every purchase, maximizing rewards automatically.

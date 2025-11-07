@@ -2,11 +2,14 @@
 import axios from 'axios';
 
 // Configuration
-// const API_BASE_URL = 'http://localhost:8000/api/v1';
-const API_BASE_URL = __DEV__ 
-  ? 'http://192.168.224.1:8000/api/v1'
-  : 'https://your-production-api.com/api/v1';
-const API_TIMEOUT = 15000;
+// for const API_BASE_URL = 'http://127.0.0.1:8000/api/v1';
+// const API_BASE_URL = 'http://192.168.1.98:8000/api/v1';
+const API_BASE_URL = 'https://chubby-rats-listen.loca.lt/api/v1'
+const API_TIMEOUT = 30000;
+
+console.log('🔧 API Configuration Loaded:');
+console.log('   Base URL:', API_BASE_URL);
+console.log('   Timeout:', API_TIMEOUT);
 
 // Create axios instance
 const apiClient = axios.create({
@@ -17,11 +20,14 @@ const apiClient = axios.create({
   },
 });
 
-// Response interceptor - Handle errors
+// Response interceptor
 apiClient.interceptors.response.use(
-  (response) => response,
+  (response) => {
+    console.log('✅ Response received:', response.status);
+    return response;
+  },
   async (error) => {
-    // Format error message
+    console.error('❌ Interceptor caught error:', error.message);
     const errorMessage = error.response?.data?.detail 
       || error.message 
       || 'An error occurred';
@@ -32,24 +38,49 @@ apiClient.interceptors.response.use(
 
 // API Service
 export const API = {
-  // Credit Cards
+  getRecommendation: async (transactionData) => {
+    console.log('');
+    console.log('═══════════════════════════════');
+    console.log('🚀 API.getRecommendation called');
+    console.log('═══════════════════════════════');
+    console.log('Full URL:', `${API_BASE_URL}/recommend`);
+    console.log('Method: POST');
+    console.log('Data:', JSON.stringify(transactionData, null, 2));
+    
+    try {
+      console.log('📡 Sending request...');
+      const response = await apiClient.post('/recommend', transactionData);
+      console.log('✅ Success! Response:', response.data);
+      return response;
+    } catch (error) {
+      console.error('');
+      console.error('╔═══════════════════════════════╗');
+      console.error('║       ERROR DETAILS           ║');
+      console.error('╚═══════════════════════════════╝');
+      console.error('Error name:', error.name);
+      console.error('Error message:', error.message);
+      console.error('Error code:', error.code);
+      console.error('Has response?', !!error.response);
+      if (error.response) {
+        console.error('Response status:', error.response.status);
+        console.error('Response data:', error.response.data);
+      }
+      console.error('Full error:', error);
+      console.error('');
+      throw error;
+    }
+  },
+
   getUserCards: async (userId) => {
     return await apiClient.get(`/users/${userId}/cards`);
   },
 
-  // Recommendations
-  getRecommendation: async (transactionData) => {
-    return await apiClient.post('/recommend', transactionData);
-  },
-
-  // Transactions
   getTransactionHistory: async (userId, limit = 50, offset = 0) => {
     return await apiClient.get(`/users/${userId}/transactions`, {
       params: { limit, offset }
     });
   },
 
-  // User Stats
   getUserStats: async (userId) => {
     return await apiClient.get(`/users/${userId}/stats`);
   },

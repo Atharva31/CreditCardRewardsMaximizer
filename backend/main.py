@@ -15,6 +15,16 @@ import uvicorn
 from datetime import datetime
 from agents import agentic_system
 
+from agentic_enhancements import (  # NEW - The 6 agents
+    behavior_agent,
+    proactive_agent,
+    context_agent,
+    planning_agent,
+    learning_agent,
+    automation_agent,
+    get_agentic_recommendation
+)
+
 
 app = FastAPI(title="Agentic Wallet API", version="1.0.0")
 
@@ -267,6 +277,95 @@ async def get_card_recommendation(request: TransactionRequest):
         result = agentic_system.get_recommendation(transaction_data, user_cards_dict)
         
         return RecommendationResponse(**result)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/api/v1/feedback")
+async def record_user_feedback(
+    transaction_id: str,
+    accepted: bool,
+    card_used: str,
+    rating: Optional[int] = None
+):
+    """Record user feedback for learning"""
+    try:
+        feedback = {
+            "accepted": accepted,
+            "card_used": card_used,
+            "rating": rating
+        }
+        
+        learning_agent.record_feedback(transaction_id, feedback)
+        adjustments = learning_agent.adjust_recommendation_weights()
+        
+        return {
+            "status": "recorded",
+            "learning_status": adjustments
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/api/v1/users/{user_id}/opportunities")
+async def get_missed_opportunities(user_id: str):
+    """Get proactive suggestions for missed optimizations"""
+    try:
+        # Mock recent transactions (in production, fetch from database)
+        recent_transactions = [
+            {
+                "merchant": "Shell Gas",
+                "amount": 45.00,
+                "card_used": "Citi Double Cash",
+                "recommended_card": "Citi Custom Cash",
+                "optimal_value": 2.25,
+                "actual_value": 0.90,
+                "timestamp": datetime.now().isoformat()
+            }
+        ]
+        
+        opportunities = proactive_agent.detect_optimization_opportunities(
+            user_id,
+            recent_transactions
+        )
+        
+        return {
+            "user_id": user_id,
+            "opportunities": opportunities,
+            "total_missed_value": sum(opp.get("missed_value", 0) for opp in opportunities)
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+@app.post("/api/v1/users/{user_id}/rules")
+async def create_automation_rule(
+    user_id: str,
+    condition: str,
+    action: str
+):
+    """Create an automation rule"""
+    try:
+        rule = {
+            "condition": condition,
+            "action": action
+        }
+        
+        automation_agent.create_automation_rule(user_id, rule)
+        
+        return {
+            "status": "created",
+            "rule": rule
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/api/v1/users/{user_id}/behavior")
+async def get_user_behavior_profile(user_id: str):
+    """Get learned user preferences and patterns"""
+    try:
+        # Mock transaction history
+        transactions = []
+        
+        profile = behavior_agent.learn_user_preferences(user_id, transactions)
+        
+        return profile
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 # @app.post("/api/v1/recommend", response_model=RecommendationResponse)
