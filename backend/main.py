@@ -1,32 +1,49 @@
+"""
+Updated FastAPI main.py with PostgreSQL Integration
+Replaces mock database with real PostgreSQL operations
+"""
+
 from dotenv import load_dotenv
 import os
 
 # Load environment variables from .env file
 load_dotenv()
 
-
-
 from fastapi import FastAPI, HTTPException, Depends
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 from typing import List, Optional, Dict
 from enum import Enum
-import uvicorn
 from datetime import datetime
-from agents import agentic_system
+from sqlalchemy.orm import Session
 
-from agentic_enhancements import (  # NEW - The 6 agents
-    behavior_agent,
-    proactive_agent,
-    context_agent,
-    planning_agent,
-    learning_agent,
-    automation_agent,
+# Import database and CRUD operations
+from database import get_db, init_db, db as database
+from crud import (
+    get_user, get_user_cards, create_transaction,
+    get_user_transactions, get_recent_transactions,
+    calculate_transaction_stats, create_transaction_feedback,
+    get_user_behavior, update_user_behavior, create_automation_rule,
+    get_user_automation_rules, get_or_create_merchant, create_credit_card, update_card, deactivate_card, get_card
+)
+from models import (
+    User as UserModel, CreditCard as CreditCardModel,
+    OptimizationGoalEnum, CategoryEnum
+)
+
+# Import AI agents
+from agents import agentic_system
+from agentic_enhancements import (
+    behavior_agent, proactive_agent, context_agent,
+    planning_agent, learning_agent, automation_agent,
     get_agentic_recommendation
 )
 
-
-app = FastAPI(title="Agentic Wallet API", version="1.0.0")
+app = FastAPI(
+    title="Agentic Wallet API",
+    version="2.0.0",
+    description="AI-Powered Credit Card Rewards Optimizer with PostgreSQL"
+)
 
 # CORS middleware for React Native
 app.add_middleware(
@@ -37,12 +54,17 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Enums and Models
+
+# ============================================================================
+# PYDANTIC MODELS (API Request/Response Schemas)
+# ============================================================================
+
 class OptimizationGoal(str, Enum):
     CASH_BACK = "cash_back"
     TRAVEL_POINTS = "travel_points"
     SPECIFIC_DISCOUNTS = "specific_discounts"
     BALANCED = "balanced"
+
 
 class Category(str, Enum):
     DINING = "dining"
@@ -53,6 +75,7 @@ class Category(str, Enum):
     SHOPPING = "shopping"
     OTHER = "other"
 
+
 class TransactionRequest(BaseModel):
     user_id: str
     merchant: str
@@ -62,14 +85,20 @@ class TransactionRequest(BaseModel):
     location: Optional[str] = None
     timestamp: Optional[datetime] = None
 
+
 class CreditCard(BaseModel):
     card_id: str
     card_name: str
     issuer: str
-    cash_back_rate: Dict[str, float]  # category -> rate
+    cash_back_rate: Dict[str, float]
     points_multiplier: Dict[str, float]
     annual_fee: float
     benefits: List[str]
+    is_active: bool
+    
+    class Config:
+        from_attributes = True
+
 
 class CardRecommendation(BaseModel):
     card_id: str
@@ -81,187 +110,121 @@ class CardRecommendation(BaseModel):
     explanation: str
     confidence_score: float
 
+
 class RecommendationResponse(BaseModel):
     recommended_card: CardRecommendation
     alternative_cards: List[CardRecommendation]
     optimization_summary: str
     total_savings: float
 
-# Mock database (replace with PostgreSQL)
-MOCK_USER_CARDS = {
-    "user123": [
-        CreditCard(
-            card_id="card1",
-            card_name="Chase Sapphire Reserve",
-            issuer="Chase",
-            cash_back_rate={"dining": 0.03, "travel": 0.03, "other": 0.01},
-            points_multiplier={"dining": 3.0, "travel": 3.0, "other": 1.0},
-            annual_fee=550.0,
-            benefits=["Airport Lounge Access", "Travel Insurance", "$300 Travel Credit"]
-        ),
-        CreditCard(
-            card_id="card2",
-            card_name="Citi Double Cash",
-            issuer="Citi",
-            cash_back_rate={"dining": 0.02, "travel": 0.02, "groceries": 0.02, "other": 0.02},
-            points_multiplier={"dining": 0.0, "travel": 0.0, "other": 0.0},
-            annual_fee=0.0,
-            benefits=["No Annual Fee", "Extended Warranty"]
-        ),
-        CreditCard(
-            card_id="card3",
-            card_name="American Express Gold",
-            issuer="Amex",
-            cash_back_rate={"dining": 0.04, "groceries": 0.04, "other": 0.01},
-            points_multiplier={"dining": 4.0, "groceries": 4.0, "other": 1.0},
-            annual_fee=250.0,
-            benefits=["Dining Credits", "Uber Credits", "Travel Insurance"]
-        )
-    ]
-}
 
-# Agent Classes
-class UserProfileAgent:
-    """Fetches user's credit cards from database"""
-    
-    def get_user_cards(self, user_id: str) -> List[CreditCard]:
-        if user_id not in MOCK_USER_CARDS:
-            raise HTTPException(status_code=404, detail="User not found")
-        return MOCK_USER_CARDS[user_id]
+class UserStats(BaseModel):
+    total_transactions: int
+    total_spent: float
+    total_rewards: float
+    total_potential_rewards: float
+    missed_value: float
+    optimization_rate: float
 
-class OfferIntelligenceAgent:
-    """Queries offers and benefits"""
-    
-    def get_applicable_offers(self, merchant: str, category: Category) -> Dict:
-        # Mock offer data (replace with real API calls)
-        offers = {
-            "dining": ["10% off at select restaurants", "Double points on weekends"],
-            "travel": ["5x points on flights", "No foreign transaction fees"],
-            "groceries": ["Extra 2% cash back at supermarkets"],
-        }
-        return {
-            "merchant_offers": offers.get(category.value, []),
-            "seasonal_promotions": []
-        }
+class CreditCardCreate(BaseModel):
+    """Schema for creating a new credit card"""
+    card_name: str = Field(..., min_length=1, max_length=100)
+    issuer: str = Field(..., description="Card issuer (Chase, Amex, Citi, etc.)")
+    cash_back_rate: Dict[str, float] = Field(default_factory=dict)
+    points_multiplier: Dict[str, float] = Field(default_factory=dict)
+    annual_fee: float = Field(default=0.0, ge=0)
+    benefits: Optional[List[str]] = Field(default_factory=list)
+    last_four_digits: Optional[str] = Field(None, max_length=4)
+    credit_limit: Optional[float] = Field(None, ge=0)
 
-class OptimizationAgent:
-    """Core optimization logic with configurable weights"""
-    
-    def __init__(self):
-        self.goal_weights = {
-            OptimizationGoal.CASH_BACK: {"cash_back": 1.0, "points": 0.1, "benefits": 0.3},
-            OptimizationGoal.TRAVEL_POINTS: {"cash_back": 0.1, "points": 1.0, "benefits": 0.5},
-            OptimizationGoal.SPECIFIC_DISCOUNTS: {"cash_back": 0.3, "points": 0.3, "benefits": 1.0},
-            OptimizationGoal.BALANCED: {"cash_back": 0.5, "points": 0.5, "benefits": 0.5}
-        }
-    
-    def calculate_card_value(
-        self, 
-        card: CreditCard, 
-        amount: float, 
-        category: Category,
-        goal: OptimizationGoal,
-        offers: Dict
-    ) -> CardRecommendation:
-        weights = self.goal_weights[goal]
-        
-        # Calculate cash back
-        cash_back = amount * card.cash_back_rate.get(category.value, card.cash_back_rate.get("other", 0))
-        
-        # Calculate points value (assuming 1 point = $0.01)
-        points_multiplier = card.points_multiplier.get(category.value, card.points_multiplier.get("other", 0))
-        points_earned = amount * points_multiplier
-        points_value = points_earned * 0.015  # Typical point valuation
-        
-        # Calculate benefits value (simplified)
-        benefits_value = len(card.benefits) * 2.0
-        
-        # Calculate total weighted value
-        total_value = (
-            weights["cash_back"] * cash_back +
-            weights["points"] * points_value +
-            weights["benefits"] * benefits_value
-        )
-        
-        # Generate explanation
-        explanation = self._generate_explanation(
-            card, cash_back, points_earned, category, goal
-        )
-        
-        return CardRecommendation(
-            card_id=card.card_id,
-            card_name=card.card_name,
-            expected_value=round(total_value, 2),
-            cash_back_earned=round(cash_back, 2),
-            points_earned=round(points_earned, 2),
-            applicable_benefits=card.benefits[:2],
-            explanation=explanation,
-            confidence_score=0.85
-        )
-    
-    def _generate_explanation(
-        self, 
-        card: CreditCard, 
-        cash_back: float, 
-        points: float, 
-        category: Category,
-        goal: OptimizationGoal
-    ) -> str:
-        if goal == OptimizationGoal.CASH_BACK:
-            return f"{card.card_name} offers ${cash_back:.2f} cash back for this transaction in the {category.value} category."
-        elif goal == OptimizationGoal.TRAVEL_POINTS:
-            return f"{card.card_name} earns {points:.0f} points, ideal for travel redemption with enhanced value."
-        else:
-            return f"{card.card_name} provides balanced rewards with ${cash_back:.2f} cash back and {points:.0f} points."
 
-class CoordinatorAgent:
-    """Orchestrates all agents and synthesizes recommendations"""
+class CreditCardUpdateRequest(BaseModel):
+    """Schema for updating a credit card"""
+    card_name: Optional[str] = None
+    cash_back_rate: Optional[Dict[str, float]] = None
+    points_multiplier: Optional[Dict[str, float]] = None
+    annual_fee: Optional[float] = Field(None, ge=0)
+    benefits: Optional[List[str]] = None
+    credit_limit: Optional[float] = Field(None, ge=0)
+    is_active: Optional[bool] = None
     
-    def __init__(self):
-        self.user_profile_agent = UserProfileAgent()
-        self.offer_agent = OfferIntelligenceAgent()
-        self.optimization_agent = OptimizationAgent()
     
-    def get_recommendation(self, request: TransactionRequest) -> RecommendationResponse:
-        # Step 1: Get user cards
-        cards = self.user_profile_agent.get_user_cards(request.user_id)
-        
-        # Step 2: Get applicable offers
-        offers = self.offer_agent.get_applicable_offers(request.merchant, request.category)
-        
-        # Step 3: Calculate value for each card
-        recommendations = []
-        for card in cards:
-            rec = self.optimization_agent.calculate_card_value(
-                card, request.amount, request.category, request.optimization_goal, offers
-            )
-            recommendations.append(rec)
-        
-        # Step 4: Sort by value
-        recommendations.sort(key=lambda x: x.expected_value, reverse=True)
-        
-        # Step 5: Generate summary
-        best_card = recommendations[0]
-        summary = f"For your ${request.amount:.2f} {request.category.value} purchase, use {best_card.card_name} to optimize {request.optimization_goal.value.replace('_', ' ')}."
-        
-        return RecommendationResponse(
-            recommended_card=best_card,
-            alternative_cards=recommendations[1:],
-            optimization_summary=summary,
-            total_savings=best_card.expected_value
-        )
+# ============================================================================
+# STARTUP EVENT - Initialize Database
+# ============================================================================
 
-# Initialize coordinator
-coordinator = CoordinatorAgent()
+@app.on_event("startup")
+async def startup_event():
+    """Initialize database on startup"""
+    print("🚀 Starting Agentic Wallet API...")
+    
+    # Check database connection
+    if database.health_check():
+        print("✅ Database connection healthy")
+    else:
+        print("❌ Database connection failed!")
+        raise Exception("Database connection failed")
+    
+    print("✨ API ready to accept requests")
 
-# API Endpoints
+
+@app.on_event("shutdown")
+async def shutdown_event():
+    """Close database connections on shutdown"""
+    database.close()
+    print("👋 Shutting down API...")
+
+
+# ============================================================================
+# API ENDPOINTS
+# ============================================================================
+
+@app.get("/health")
+async def health_check():
+    """Health check endpoint"""
+    db_healthy = database.health_check()
+    return {
+        "status": "healthy" if db_healthy else "unhealthy",
+        "database": "connected" if db_healthy else "disconnected",
+        "timestamp": datetime.utcnow()
+    }
 
 
 @app.post("/api/v1/recommend", response_model=RecommendationResponse)
-async def get_card_recommendation(request: TransactionRequest):
-    """Get AI-powered credit card recommendation"""
+async def get_card_recommendation(
+    request: TransactionRequest,
+    db: Session = Depends(get_db)
+):
+    """Get AI-powered credit card recommendation using PostgreSQL data"""
     try:
-        # Convert request to dict
+        # Get user from database
+        user = get_user(db, request.user_id)
+        if not user:
+            raise HTTPException(status_code=404, detail="User not found")
+        
+        # Get user's active credit cards from database
+        user_cards = get_user_cards(db, request.user_id, active_only=True)
+        if not user_cards:
+            raise HTTPException(
+                status_code=404,
+                detail="No active credit cards found for user"
+            )
+        
+        # Convert SQLAlchemy models to dictionaries for AI agent
+        user_cards_dict = [
+            {
+                "card_id": card.card_id,
+                "card_name": card.card_name,
+                "issuer": card.issuer.value,
+                "cash_back_rate": card.cash_back_rate,
+                "points_multiplier": card.points_multiplier,
+                "annual_fee": card.annual_fee,
+                "benefits": card.benefits or []
+            }
+            for card in user_cards
+        ]
+        
+        # Prepare transaction data for AI
         transaction_data = {
             "merchant": request.merchant,
             "amount": request.amount,
@@ -269,122 +232,459 @@ async def get_card_recommendation(request: TransactionRequest):
             "optimization_goal": request.optimization_goal
         }
         
-        # Get user cards
-        user_cards = MOCK_USER_CARDS.get(request.user_id, [])
-        user_cards_dict = [card.dict() for card in user_cards]
+        # Get AI recommendation
+        result = agentic_system.get_recommendation(
+            transaction_data,
+            user_cards_dict
+        )
         
-        # Use agentic AI system
-        result = agentic_system.get_recommendation(transaction_data, user_cards_dict)
+        # Store transaction in database
+        recommended_card_id = result["recommended_card"]["card_id"]
+        transaction = create_transaction(
+            db,
+            user_id=request.user_id,
+            merchant=request.merchant,
+            amount=request.amount,
+            category=CategoryEnum(request.category),
+            optimization_goal=OptimizationGoalEnum(request.optimization_goal),
+            recommended_card_id=recommended_card_id,
+            location=request.location,
+            recommendation_explanation=result["recommended_card"]["explanation"],
+            confidence_score=result["recommended_card"]["confidence_score"],
+            alternative_cards=[
+                {
+                    "card_id": alt["card_id"],
+                    "expected_value": alt["expected_value"]
+                }
+                for alt in result["alternative_cards"]
+            ],
+            cash_back_earned=result["recommended_card"]["cash_back_earned"],
+            points_earned=result["recommended_card"]["points_earned"],
+            total_value_earned=result["recommended_card"]["expected_value"],
+            optimal_value=result["recommended_card"]["expected_value"]
+        )
+        
+        # Get or create merchant
+        get_or_create_merchant(db, request.merchant, CategoryEnum(request.category))
         
         return RecommendationResponse(**result)
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        print(f"Error in recommendation: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/v1/users/{user_id}/cards", response_model=List[CreditCard])
+async def get_user_credit_cards(user_id: str, db: Session = Depends(get_db)):
+    """Get all active credit cards for a user"""
+    try:
+        user = get_user(db, user_id)
+        if not user:
+            raise HTTPException(status_code=404, detail="User not found")
+        
+        cards = get_user_cards(db, user_id, active_only=True)
+        return cards
+        
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/v1/users/{user_id}/transactions")
+async def get_user_transaction_history(
+    user_id: str,
+    limit: int = 50,
+    db: Session = Depends(get_db)
+):
+    """Get transaction history for a user"""
+    try:
+        user = get_user(db, user_id)
+        if not user:
+            raise HTTPException(status_code=404, detail="User not found")
+        
+        transactions = get_user_transactions(db, user_id, limit=limit)
+        
+        return {
+            "user_id": user_id,
+            "total_transactions": len(transactions),
+            "transactions": [
+                {
+                    "transaction_id": t.transaction_id,
+                    "merchant": t.merchant,
+                    "amount": t.amount,
+                    "category": t.category.value,
+                    "card_used": t.card.card_name if t.card else None,
+                    "rewards_earned": t.total_value_earned,
+                    "date": t.transaction_date.isoformat()
+                }
+                for t in transactions
+            ]
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/v1/users/{user_id}/stats", response_model=UserStats)
+async def get_user_statistics(user_id: str, db: Session = Depends(get_db)):
+    """Get user statistics and optimization metrics"""
+    try:
+        user = get_user(db, user_id)
+        if not user:
+            raise HTTPException(status_code=404, detail="User not found")
+        
+        stats = calculate_transaction_stats(db, user_id)
+        return UserStats(**stats)
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/v1/users/{user_id}/behavior")
+async def get_user_behavior_profile(user_id: str, db: Session = Depends(get_db)):
+    """Get learned user preferences and patterns"""
+    try:
+        user = get_user(db, user_id)
+        if not user:
+            raise HTTPException(status_code=404, detail="User not found")
+        
+        # Get or create behavior profile
+        behavior = get_user_behavior(db, user_id)
+        
+        # Update behavior with recent transactions
+        recent_txns = get_recent_transactions(db, user_id, days=90)
+        if recent_txns:
+            behavior = update_user_behavior(db, user_id, recent_txns)
+        
+        if not behavior:
+            return {
+                "user_id": user_id,
+                "status": "No behavior data available yet"
+            }
+        
+        return {
+            "user_id": user_id,
+            "preferred_goal": behavior.preferred_goal.value if behavior.preferred_goal else None,
+            "common_categories": behavior.common_categories,
+            "favorite_merchants": behavior.favorite_merchants,
+            "avg_transaction_amount": behavior.avg_transaction_amount,
+            "total_transactions": behavior.total_transactions,
+            "total_rewards_earned": behavior.total_rewards_earned,
+            "optimization_score": behavior.optimization_score,
+            "most_used_card_id": behavior.most_used_card_id,
+            "last_updated": behavior.last_updated.isoformat()
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/v1/users/{user_id}/opportunities")
+async def get_missed_opportunities(user_id: str, db: Session = Depends(get_db)):
+    """Get proactive suggestions for missed optimizations"""
+    try:
+        user = get_user(db, user_id)
+        if not user:
+            raise HTTPException(status_code=404, detail="User not found")
+        
+        # Get recent transactions
+        recent_transactions = get_recent_transactions(db, user_id, days=30, limit=20)
+        
+        # Convert to format expected by proactive agent
+        transaction_dicts = [
+            {
+                "merchant": t.merchant,
+                "amount": t.amount,
+                "card_used": t.card.card_name if t.card else "Unknown",
+                "recommended_card": t.recommended_card_id or "Unknown",
+                "optimal_value": t.optimal_value or 0,
+                "actual_value": t.total_value_earned or 0,
+                "timestamp": t.transaction_date.isoformat()
+            }
+            for t in recent_transactions
+        ]
+        
+        opportunities = proactive_agent.detect_optimization_opportunities(
+            user_id,
+            transaction_dicts
+        )
+        
+        return {
+            "user_id": user_id,
+            "opportunities": opportunities,
+            "total_missed_value": sum(
+                opp.get("missed_value", 0) for opp in opportunities
+            )
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
 
 @app.post("/api/v1/feedback")
 async def record_user_feedback(
     transaction_id: str,
     accepted: bool,
     card_used: str,
-    rating: Optional[int] = None
+    rating: Optional[int] = None,
+    feedback_text: Optional[str] = None,
+    db: Session = Depends(get_db)
 ):
     """Record user feedback for learning"""
     try:
-        feedback = {
-            "accepted": accepted,
-            "card_used": card_used,
-            "rating": rating
-        }
+        # Create feedback in database
+        feedback = create_transaction_feedback(
+            db,
+            transaction_id=transaction_id,
+            accepted_recommendation=accepted,
+            satisfaction_rating=rating,
+            feedback_text=feedback_text,
+            actual_card_used=card_used
+        )
         
-        learning_agent.record_feedback(transaction_id, feedback)
+        # Also record in learning agent
+        learning_agent.record_feedback(
+            transaction_id,
+            {
+                "accepted": accepted,
+                "card_used": card_used,
+                "rating": rating
+            }
+        )
+        
         adjustments = learning_agent.adjust_recommendation_weights()
         
         return {
             "status": "recorded",
+            "feedback_id": feedback.feedback_id,
             "learning_status": adjustments
         }
+        
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
-@app.get("/api/v1/users/{user_id}/opportunities")
-async def get_missed_opportunities(user_id: str):
-    """Get proactive suggestions for missed optimizations"""
-    try:
-        # Mock recent transactions (in production, fetch from database)
-        recent_transactions = [
-            {
-                "merchant": "Shell Gas",
-                "amount": 45.00,
-                "card_used": "Citi Double Cash",
-                "recommended_card": "Citi Custom Cash",
-                "optimal_value": 2.25,
-                "actual_value": 0.90,
-                "timestamp": datetime.now().isoformat()
-            }
-        ]
-        
-        opportunities = proactive_agent.detect_optimization_opportunities(
-            user_id,
-            recent_transactions
-        )
-        
-        return {
-            "user_id": user_id,
-            "opportunities": opportunities,
-            "total_missed_value": sum(opp.get("missed_value", 0) for opp in opportunities)
-        }
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+
 @app.post("/api/v1/users/{user_id}/rules")
-async def create_automation_rule(
+async def create_automation_rule_endpoint(
     user_id: str,
-    condition: str,
-    action: str
+    rule_name: str,
+    condition_type: str,
+    condition_value: Dict,
+    action_card_id: str,
+    rule_description: Optional[str] = None,
+    db: Session = Depends(get_db)
 ):
     """Create an automation rule"""
     try:
-        rule = {
-            "condition": condition,
-            "action": action
-        }
+        user = get_user(db, user_id)
+        if not user:
+            raise HTTPException(status_code=404, detail="User not found")
         
-        automation_agent.create_automation_rule(user_id, rule)
+        rule = create_automation_rule(
+            db,
+            user_id=user_id,
+            rule_name=rule_name,
+            condition_type=condition_type,
+            condition_value=condition_value,
+            action_card_id=action_card_id,
+            rule_description=rule_description
+        )
         
         return {
             "status": "created",
-            "rule": rule
+            "rule_id": rule.rule_id,
+            "rule_name": rule.rule_name
         }
+        
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
-@app.get("/api/v1/users/{user_id}/behavior")
-async def get_user_behavior_profile(user_id: str):
-    """Get learned user preferences and patterns"""
+
+@app.get("/api/v1/users/{user_id}/rules")
+async def get_automation_rules_endpoint(
+    user_id: str,
+    db: Session = Depends(get_db)
+):
+    """Get automation rules for a user"""
     try:
-        # Mock transaction history
-        transactions = []
+        user = get_user(db, user_id)
+        if not user:
+            raise HTTPException(status_code=404, detail="User not found")
         
-        profile = behavior_agent.learn_user_preferences(user_id, transactions)
+        rules = get_user_automation_rules(db, user_id, active_only=True)
         
-        return profile
+        return {
+            "user_id": user_id,
+            "rules": [
+                {
+                    "rule_id": rule.rule_id,
+                    "rule_name": rule.rule_name,
+                    "condition_type": rule.condition_type,
+                    "condition_value": rule.condition_value,
+                    "action_card_id": rule.action_card_id,
+                    "times_triggered": rule.times_triggered,
+                    "is_active": rule.is_active
+                }
+                for rule in rules
+            ]
+        }
+        
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
-# @app.post("/api/v1/recommend", response_model=RecommendationResponse)
-# async def get_card_recommendation(request: TransactionRequest):
-#     """Get optimized credit card recommendation"""
-#     try:
-#         return coordinator.get_recommendation(request)
-#     except Exception as e:
-#         raise HTTPException(status_code=500, detail=str(e))
 
-@app.get("/api/v1/users/{user_id}/cards", response_model=List[CreditCard])
-async def get_user_cards(user_id: str):
-    """Get all credit cards for a user"""
-    agent = UserProfileAgent()
-    return agent.get_user_cards(user_id)
 
-@app.get("/health")
-async def health_check():
-    return {"status": "healthy", "timestamp": datetime.utcnow()}
+# ============================================================================
+# CARD CRUD ENDPOINTS
+# ============================================================================
+
+@app.get("/api/v1/categories", response_model=List[str])
+async def get_categories():
+    """Get list of all available spending categories"""
+    return [category.value for category in CategoryEnum]
+
+
+@app.get("/api/v1/optimization-goals", response_model=List[str])
+async def get_optimization_goals():
+    """Get list of all available optimization goals"""
+    return [goal.value for goal in OptimizationGoalEnum]
+
+
+@app.post("/api/v1/cards", response_model=CreditCard, status_code=201)
+async def add_credit_card(
+    card: CreditCardCreate,
+    user_id: str,
+    db: Session = Depends(get_db)
+):
+    """Add a new credit card for a user"""
+    try:
+        user = get_user(db, user_id)
+        if not user:
+            raise HTTPException(status_code=404, detail="User not found")
+        
+        from models import CardIssuerEnum
+        try:
+            issuer_enum = CardIssuerEnum(card.issuer)
+        except ValueError:
+            issuer_enum = CardIssuerEnum.OTHER
+        
+        new_card = create_credit_card(
+            db,
+            user_id=user_id,
+            card_name=card.card_name,
+            issuer=issuer_enum,
+            cash_back_rate=card.cash_back_rate,
+            points_multiplier=card.points_multiplier,
+            annual_fee=card.annual_fee,
+            benefits=card.benefits,
+            last_four_digits=card.last_four_digits,
+            credit_limit=card.credit_limit
+        )
+        
+        return CreditCard(
+            card_id=new_card.card_id,
+            card_name=new_card.card_name,
+            issuer=new_card.issuer.value,
+            cash_back_rate=new_card.cash_back_rate,
+            points_multiplier=new_card.points_multiplier,
+            annual_fee=new_card.annual_fee,
+            benefits=new_card.benefits or [],
+            is_active=new_card.is_active
+        )
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error creating card: {str(e)}")
+
+
+@app.put("/api/v1/cards/{card_id}", response_model=CreditCard)
+async def update_credit_card(
+    card_id: str,
+    card_update: CreditCardUpdateRequest,
+    db: Session = Depends(get_db)
+):
+    """Update an existing credit card"""
+    try:
+        existing_card = get_card(db, card_id)
+        if not existing_card:
+            raise HTTPException(status_code=404, detail="Card not found")
+        
+        update_data = card_update.dict(exclude_unset=True)
+        updated_card = update_card(db, card_id, **update_data)
+        
+        if not updated_card:
+            raise HTTPException(status_code=404, detail="Card not found")
+        
+        return CreditCard(
+            card_id=updated_card.card_id,
+            card_name=updated_card.card_name,
+            issuer=updated_card.issuer.value,
+            cash_back_rate=updated_card.cash_back_rate,
+            points_multiplier=updated_card.points_multiplier,
+            annual_fee=updated_card.annual_fee,
+            benefits=updated_card.benefits or [],
+            is_active=updated_card.is_active
+        )
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error updating card: {str(e)}")
+
+
+@app.delete("/api/v1/cards/{card_id}", status_code=200)
+async def delete_credit_card(
+    card_id: str,
+    db: Session = Depends(get_db)
+):
+    """Delete (deactivate) a credit card"""
+    try:
+        success = deactivate_card(db, card_id)
+        
+        if not success:
+            raise HTTPException(status_code=404, detail="Card not found")
+        
+        return {
+            "status": "success",
+            "message": f"Card {card_id} has been deactivated",
+            "card_id": card_id
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error deleting card: {str(e)}")
+        
+
+# ============================================================================
+# DATABASE MANAGEMENT ENDPOINTS (Development/Admin only)
+# ============================================================================
+
+@app.post("/api/v1/admin/init-db")
+async def initialize_database():
+    """Initialize database tables - ADMIN ONLY"""
+    try:
+        init_db()
+        return {"status": "success", "message": "Database initialized"}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
 
 if __name__ == "__main__":
+    import uvicorn
     uvicorn.run(app, host="0.0.0.0", port=8000)
