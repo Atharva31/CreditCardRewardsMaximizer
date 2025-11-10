@@ -39,6 +39,26 @@ docker-compose up
 - **Frontend (Expo Web)**: http://localhost:19006
 - **Health Check**: http://localhost:8000/health
 
+### Mobile Testing (iOS/Android Simulator)
+
+For mobile app testing, run the frontend locally instead of in Docker:
+
+```bash
+# Stop frontend container if running
+docker-compose stop frontend
+
+# Or just run backend services
+docker-compose up backend postgres -d
+
+# Then run frontend locally for mobile
+cd frontend
+npm install  # Install dependencies (only needed once or when package.json changes)
+npx expo start  # Start Expo dev server
+# Press 'i' for iOS simulator or 'a' for Android emulator
+```
+
+**Note:** Docker cannot run iOS/Android simulators. The Expo dev server must run on your Mac to connect to simulators.
+
 ---
 
 ## 🛠️ Manual Setup (Alternative)
