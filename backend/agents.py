@@ -45,12 +45,12 @@ class AgenticRecommendationSystem:
                 )
                 print("✓ Groq AI initialized successfully")
             except Exception as e:
-                print(f"⚠ Warning: Could not initialize Groq AI: {e}")
-                print("  Falling back to rule-based recommendations")
+                print(f"❌ ERROR: Could not initialize Groq AI: {e}")
+                print("  Service will not be available until this is resolved")
                 self.llm = None
         else:
-            print("⚠ Warning: GROQ_API_KEY not found in environment")
-            print("  Using rule-based recommendations instead of AI")
+            print("❌ ERROR: GROQ_API_KEY not found in environment")
+            print("  Service will not be available until API key is configured")
         
         # Only create prompt and chain if LLM is available
         self.recommendation_prompt = None
@@ -260,10 +260,10 @@ Card: {card['card_name']} ({card['issuer']})
         card_scores.sort(key=lambda x: x['value'], reverse=True)
         logger.info(f"Top card by calculation: {card_scores[0]['card']['card_name']} (${card_scores[0]['value']:.2f})")
         
-        # If no LLM available, use fallback with calculated scores
+        # If no LLM available, raise error - NO FALLBACK
         if not self.llm:
-            logger.info("Using rule-based fallback (no AI available)")
-            return self._fallback_recommendation_with_scores(transaction_data, card_scores)
+            logger.error("Groq AI not available - cannot provide recommendations")
+            raise RuntimeError("AI service unavailable. Please ensure GROQ_API_KEY is configured and the service is operational.")
         
         # Get top 3 cards for AI analysis
         top_cards = card_scores[:3]
@@ -285,55 +285,50 @@ Rank #{i}: {card['card_name']} ({card['issuer']})
         cards_info = "\n".join(cards_info_with_scores)
         
         # Get LLM recommendation (AI explains WHY top card is best)
-        try:
-            logger.info("Requesting AI explanation for top recommendation")
-            result = self.recommendation_chain.invoke({
-                "merchant": transaction_data['merchant'],
-                "amount": transaction_data['amount'],
-                "category": transaction_data['category'],
-                "goal": transaction_data['optimization_goal'],
-                "cards_info": cards_info
-            })
-            
-            # Use top card from calculation (AI just provides explanation)
-            best_card_data = card_scores[0]
-            best_card = best_card_data['card']
-            best_breakdown = best_card_data['breakdown']
-            
-            # Parse AI explanation
-            response_text = result['text']
-            ai_explanation = response_text.strip()
-            
-            # Build enhanced explanation with comparisons
-            enhanced_explanation = self._build_enhanced_explanation(
-                card_scores[:3],  # Top 3 cards
-                transaction_data,
-                ai_explanation
-            )
-            
-            logger.info(f"Recommendation complete: {best_card['card_name']} - ${best_card_data['value']:.2f}")
-            
-            # Build final response
-            return {
-                "recommended_card": {
-                    "card_id": best_card['card_id'],
-                    "card_name": best_card['card_name'],
-                    "expected_value": round(best_card_data['value'], 2),
-                    "cash_back_earned": round(best_breakdown['cash_back'], 2),
-                    "points_earned": round(best_breakdown['points'], 2),
-                    "applicable_benefits": best_card.get('benefits', [])[:2],
-                    "explanation": enhanced_explanation,
-                    "confidence_score": 0.95  # Higher confidence with calculation
-                },
-                "alternative_cards": self._build_alternatives_from_scores(card_scores[1:3]),
-                "optimization_summary": f"Best choice for {transaction_data['optimization_goal'].replace('_', ' ')}: {best_card['card_name']} (${best_card_data['value']:.2f} value)",
-                "total_savings": round(best_card_data['value'], 2)
-            }
-            
-        except Exception as e:
-            logger.error(f"Agentic AI Error: {e}", exc_info=True)
-            # Fallback to rule-based if AI fails
-            return self._fallback_recommendation_with_scores(transaction_data, card_scores)
+        # NO TRY-EXCEPT: Let errors propagate to notify users
+        logger.info("Requesting AI explanation for top recommendation")
+        result = self.recommendation_chain.invoke({
+            "merchant": transaction_data['merchant'],
+            "amount": transaction_data['amount'],
+            "category": transaction_data['category'],
+            "goal": transaction_data['optimization_goal'],
+            "cards_info": cards_info
+        })
+        
+        # Use top card from calculation (AI just provides explanation)
+        best_card_data = card_scores[0]
+        best_card = best_card_data['card']
+        best_breakdown = best_card_data['breakdown']
+        
+        # Parse AI explanation
+        response_text = result['text']
+        ai_explanation = response_text.strip()
+        
+        # Build enhanced explanation with comparisons
+        enhanced_explanation = self._build_enhanced_explanation(
+            card_scores[:3],  # Top 3 cards
+            transaction_data,
+            ai_explanation
+        )
+        
+        logger.info(f"Recommendation complete: {best_card['card_name']} - ${best_card_data['value']:.2f}")
+        
+        # Build final response
+        return {
+            "recommended_card": {
+                "card_id": best_card['card_id'],
+                "card_name": best_card['card_name'],
+                "expected_value": round(best_card_data['value'], 2),
+                "cash_back_earned": round(best_breakdown['cash_back'], 2),
+                "points_earned": round(best_breakdown['points'], 2),
+                "applicable_benefits": best_card.get('benefits', [])[:2],
+                "explanation": enhanced_explanation,
+                "confidence_score": 0.95  # Higher confidence with calculation
+            },
+            "alternative_cards": self._build_alternatives_from_scores(card_scores[1:3]),
+            "optimization_summary": f"Best choice for {transaction_data['optimization_goal'].replace('_', ' ')}: {best_card['card_name']} (${best_card_data['value']:.2f} value)",
+            "total_savings": round(best_card_data['value'], 2)
+        }
     
     def _build_enhanced_explanation(
         self, 

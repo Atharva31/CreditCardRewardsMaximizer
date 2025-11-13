@@ -5,6 +5,7 @@ Replaces mock database with real PostgreSQL operations
 
 from dotenv import load_dotenv
 import os
+import logging
 
 # Load environment variables from .env file
 load_dotenv()
@@ -16,6 +17,9 @@ from typing import List, Optional, Dict
 from enum import Enum
 from datetime import datetime
 from sqlalchemy.orm import Session
+
+# Configure logging
+logger = logging.getLogger(__name__)
 
 # Import database and CRUD operations
 from database import get_db, init_db, db as database
@@ -232,11 +236,19 @@ async def get_card_recommendation(
             "optimization_goal": request.optimization_goal
         }
         
-        # Get AI recommendation
-        result = agentic_system.get_recommendation(
-            transaction_data,
-            user_cards_dict
-        )
+        # Get AI recommendation - will raise RuntimeError if Groq unavailable
+        try:
+            result = agentic_system.get_recommendation(
+                transaction_data,
+                user_cards_dict
+            )
+        except RuntimeError as e:
+            # AI service unavailable - notify user clearly
+            logger.error(f"AI service error: {e}")
+            raise HTTPException(
+                status_code=503,
+                detail=f"AI recommendation service unavailable: {str(e)}"
+            )
         
         # Store transaction in database
         recommended_card_id = result["recommended_card"]["card_id"]
@@ -272,8 +284,11 @@ async def get_card_recommendation(
     except HTTPException:
         raise
     except Exception as e:
-        print(f"Error in recommendation: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+        logger.error(f"Unexpected error in recommendation: {e}", exc_info=True)
+        raise HTTPException(
+            status_code=500,
+            detail=f"An unexpected error occurred: {str(e)}"
+        )
 
 
 @app.get("/api/v1/users/{user_id}/cards", response_model=List[CreditCard])
