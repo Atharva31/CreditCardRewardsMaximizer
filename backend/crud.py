@@ -24,6 +24,7 @@ def create_user(
     db: Session,
     email: str,
     full_name: str,
+    password_hash: str,
     phone: Optional[str] = None,
     default_optimization_goal: OptimizationGoalEnum = OptimizationGoalEnum.BALANCED
 ) -> User:
@@ -31,6 +32,7 @@ def create_user(
     user = User(
         user_id=f"user_{uuid.uuid4().hex[:12]}",
         email=email,
+        password_hash=password_hash,
         full_name=full_name,
         phone=phone,
         default_optimization_goal=default_optimization_goal
@@ -38,10 +40,10 @@ def create_user(
     db.add(user)
     db.commit()
     db.refresh(user)
-    
+
     # Initialize user behavior
     create_user_behavior(db, user.user_id)
-    
+
     return user
 
 

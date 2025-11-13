@@ -2,10 +2,12 @@
 import axios from 'axios';
 
 // Configuration
-
-// for const API_BASE_URL = 'http://127.0.0.1:8000/api/v1';
+// Use your Mac's local IP address for physical device/iOS simulator testing
+// For web browser testing, use localhost
+const API_BASE_URL = 'http://10.0.0.222:8000/api/v1';  // Mac local IP
+// const API_BASE_URL = 'http://127.0.0.1:8000/api/v1';  // For web browser only
 // const API_BASE_URL = 'http://192.168.1.98:8000/api/v1';
-const API_BASE_URL = 'https://chubby-rats-listen.loca.lt/api/v1'
+// const API_BASE_URL = 'https://chubby-rats-listen.loca.lt/api/v1'
 
 const API_TIMEOUT = 30000;
 
@@ -91,6 +93,55 @@ export const API = {
     return await apiClient.get(`/users/${userId}/rewards/monthly`, {
       params: { months }
     });
+  },
+
+  // Authentication methods
+  signup: async (signupData) => {
+    console.log('');
+    console.log('═══════════════════════════════');
+    console.log('🚀 API.signup called');
+    console.log('═══════════════════════════════');
+    console.log('Full URL:', `${API_BASE_URL}/auth/signup`);
+    console.log('Data:', JSON.stringify(signupData, null, 2));
+
+    try {
+      const response = await apiClient.post('/auth/signup', signupData);
+      console.log('✅ Signup successful:', response.data);
+      return response;
+    } catch (error) {
+      console.error('');
+      console.error('╔═══════════════════════════════╗');
+      console.error('║   SIGNUP ERROR DETAILS        ║');
+      console.error('╚═══════════════════════════════╝');
+      console.error('Error message:', error.message);
+      console.error('Response data:', error.response?.data);
+      console.error('');
+      throw error;
+    }
+  },
+
+  signin: async (signinData) => {
+    console.log('');
+    console.log('═══════════════════════════════');
+    console.log('🚀 API.signin called');
+    console.log('═══════════════════════════════');
+    console.log('Full URL:', `${API_BASE_URL}/auth/signin`);
+    console.log('Email:', signinData.email);
+
+    try {
+      const response = await apiClient.post('/auth/signin', signinData);
+      console.log('✅ Signin successful:', response.data);
+      return response;
+    } catch (error) {
+      console.error('');
+      console.error('╔═══════════════════════════════╗');
+      console.error('║   SIGNIN ERROR DETAILS        ║');
+      console.error('╚═══════════════════════════════╝');
+      console.error('Error message:', error.message);
+      console.error('Response data:', error.response?.data);
+      console.error('');
+      throw error;
+    }
   },
 };
 
