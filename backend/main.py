@@ -44,6 +44,9 @@ from agentic_enhancements import (
     get_agentic_recommendation
 )
 
+# Import auth utilities
+from auth import hash_password, verify_password, generate_user_id
+
 app = FastAPI(
     title="Agentic Wallet API",
     version="2.0.0",
@@ -152,6 +155,28 @@ class CreditCardUpdateRequest(BaseModel):
     benefits: Optional[List[str]] = None
     credit_limit: Optional[float] = Field(None, ge=0)
     is_active: Optional[bool] = None
+
+
+class SignupRequest(BaseModel):
+    """Schema for user signup"""
+    email: str = Field(..., description="User email address")
+    password: str = Field(..., min_length=6, description="Password (minimum 6 characters)")
+    full_name: str = Field(..., min_length=1, description="User's full name")
+    phone: Optional[str] = Field(None, description="Phone number")
+
+
+class SigninRequest(BaseModel):
+    """Schema for user signin"""
+    email: str = Field(..., description="User email address")
+    password: str = Field(..., description="Password")
+
+
+class AuthResponse(BaseModel):
+    """Schema for authentication response"""
+    user_id: str
+    email: str
+    full_name: str
+    message: str
     
     
 # ============================================================================
@@ -193,6 +218,113 @@ async def health_check():
         "database": "connected" if db_healthy else "disconnected",
         "timestamp": datetime.utcnow()
     }
+
+
+# ============================================================================
+# AUTHENTICATION ENDPOINTS
+# ============================================================================
+
+@app.post("/api/v1/auth/signup", response_model=AuthResponse, status_code=201)
+async def signup(request: SignupRequest, db: Session = Depends(get_db)):
+    """
+    Create a new user account
+    """
+    try:
+        # Check if user already exists
+        existing_user = db.query(UserModel).filter(UserModel.email == request.email).first()
+        if existing_user:
+            raise HTTPException(
+                status_code=400,
+                detail="Email already registered"
+            )
+
+        # Generate user ID and hash password
+        user_id = generate_user_id()
+        password_hash = hash_password(request.password)
+
+        # Create new user
+        new_user = UserModel(
+            user_id=user_id,
+            email=request.email,
+            password_hash=password_hash,
+            full_name=request.full_name,
+            phone=request.phone
+        )
+
+        db.add(new_user)
+        db.commit()
+        db.refresh(new_user)
+
+        # Initialize user behavior record
+        from crud import create_user_behavior
+        create_user_behavior(db, user_id)
+
+        logger.info(f"New user created: {user_id} - {request.email}")
+
+        return AuthResponse(
+            user_id=new_user.user_id,
+            email=new_user.email,
+            full_name=new_user.full_name,
+            message="Account created successfully"
+        )
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error during signup: {e}", exc_info=True)
+        db.rollback()
+        raise HTTPException(
+            status_code=500,
+            detail=f"Error creating account: {str(e)}"
+        )
+
+
+@app.post("/api/v1/auth/signin", response_model=AuthResponse)
+async def signin(request: SigninRequest, db: Session = Depends(get_db)):
+    """
+    Sign in an existing user
+    """
+    try:
+        # Find user by email
+        user = db.query(UserModel).filter(UserModel.email == request.email).first()
+
+        if not user:
+            raise HTTPException(
+                status_code=401,
+                detail="Invalid email or password"
+            )
+
+        # Verify password
+        if not verify_password(request.password, user.password_hash):
+            raise HTTPException(
+                status_code=401,
+                detail="Invalid email or password"
+            )
+
+        # Check if user is active
+        if not user.is_active:
+            raise HTTPException(
+                status_code=403,
+                detail="Account is inactive. Please contact support."
+            )
+
+        logger.info(f"User signed in: {user.user_id} - {user.email}")
+
+        return AuthResponse(
+            user_id=user.user_id,
+            email=user.email,
+            full_name=user.full_name,
+            message="Signed in successfully"
+        )
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error during signin: {e}", exc_info=True)
+        raise HTTPException(
+            status_code=500,
+            detail=f"Error signing in: {str(e)}"
+        )
 
 
 @app.post("/api/v1/recommend", response_model=RecommendationResponse)
