@@ -45,6 +45,8 @@ services:
       start_period: 5s
     networks:
       - app-network
+    command: ["/bin/sh","-c","set -e; if [ -f /app/startup.sh ]; then sed -i 's/\\r$//' /app/startup.sh; chmod +x /app/startup.sh; exec /app/startup.sh; else echo 'startup.sh not found at /app'; exit 1; fi"]
+
 
   frontend:
     build:

@@ -15,7 +15,8 @@ import {
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
-const API_BASE = process.env.EXPO_PUBLIC_API_URL || 'http://localhost:8000';
+// const API_BASE = process.env.EXPO_PUBLIC_API_URL || 'http://localhost:8000';
+const API_BASE = "https://hip-wolves-yell.loca.lt/api/v1"
 
 export default function CardsScreen({ navigation, route }) {
   const USER_ID = route?.params?.userId || 'demo-user-123';

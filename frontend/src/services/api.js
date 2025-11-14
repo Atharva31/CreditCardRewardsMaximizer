@@ -1,29 +1,67 @@
-// src/services/api.js - Complete API Service
+// src/services/api.js - CORRECTED: Backend doesn't use /api/v1 prefix
 
 import axios from 'axios';
 
-// Backend URL - Configured via environment variable or defaults to Docker-compatible URL
-// For Docker: uses localhost (backend exposed on host port 8000)
-// For mobile testing: set EXPO_PUBLIC_API_URL environment variable or use localtunnel
-const API_BASE_URL = process.env.EXPO_PUBLIC_API_URL || 'http://localhost:8000/api/v1';
+// 🔥 UPDATE THIS with your current tunnel URL from Terminal 2!
+// NOTE: Backend doesn't use /api/v1 prefix, so we don't add it!
+const API_BASE_URL = 'https://hip-wolves-yell.loca.lt/api/v1';
+
+console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
+console.log('📡 API Configuration');
+console.log('Base URL:', API_BASE_URL);
+console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
 
 const api = axios.create({
   baseURL: API_BASE_URL,
   headers: {
     'Content-Type': 'application/json',
+    'Bypass-Tunnel-Reminder': 'true',  // Skip localtunnel warning page
   },
-  timeout: 10000, // 10 second timeout
+  timeout: 30000, // 30 seconds (tunnels can be slow)
 });
+
+// Request interceptor for debugging
+api.interceptors.request.use(
+  (config) => {
+    const fullURL = config.baseURL + config.url;
+    console.log('→ Making request to:', fullURL);
+    console.log('→ Method:', config.method?.toUpperCase());
+    console.log('→ Data:', config.data);
+    return config;
+  },
+  (error) => {
+    console.error('❌ Request setup error:', error.message);
+    return Promise.reject(error);
+  }
+);
+
+// Response interceptor for debugging
+api.interceptors.response.use(
+  (response) => {
+    console.log('✅ Success:', response.status, response.config.url);
+    console.log('✅ Data:', response.data);
+    return response;
+  },
+  (error) => {
+    const fullURL = error.config?.baseURL + error.config?.url;
+    console.error('❌ Request failed');
+    console.error('❌ Status:', error.response?.status);
+    console.error('❌ URL:', fullURL);
+    console.error('❌ Error:', error.response?.data);
+    return Promise.reject(error);
+  }
+);
 
 export const API = {
   // Get AI recommendation for a transaction
   getRecommendation: async (transactionData) => {
     try {
-      console.log('API: Getting recommendation for:', transactionData);
+      console.log('🤖 Getting recommendation...');
       const response = await api.post('/recommend', transactionData);
+      console.log('✨ Recommendation received!');
       return response;
     } catch (error) {
-      console.error('API Error (getRecommendation):', error);
+      console.error('Failed to get recommendation');
       throw error;
     }
   },
@@ -31,11 +69,12 @@ export const API = {
   // Save transaction to database
   saveTransaction: async (transactionRecord) => {
     try {
-      console.log('API: Saving transaction:', transactionRecord);
+      console.log('💾 Saving transaction...');
       const response = await api.post('/transactions', transactionRecord);
+      console.log('✅ Transaction saved!');
       return response;
     } catch (error) {
-      console.error('API Error (saveTransaction):', error);
+      console.error('Failed to save transaction');
       // Don't throw - we don't want to block the user if saving fails
       return null;
     }
@@ -44,15 +83,16 @@ export const API = {
   // Get all transactions for history
   getTransactions: async (userId = 'user123', filters = {}) => {
     try {
-      console.log('API: Getting transactions for user:', userId);
+      console.log('📜 Getting transactions...');
       const params = {
         user_id: userId,
         ...filters,
       };
       const response = await api.get('/transactions', { params });
+      console.log(`✅ Found ${response.data.length} transactions`);
       return response.data;
     } catch (error) {
-      console.error('API Error (getTransactions):', error);
+      console.error('Failed to get transactions');
       throw error;
     }
   },
@@ -60,11 +100,12 @@ export const API = {
   // Get user stats (total saved, transaction count, etc.)
   getUserStats: async (userId = 'user123') => {
     try {
-      console.log('API: Getting stats for user:', userId);
+      console.log('📊 Getting stats...');
       const response = await api.get(`/users/${userId}/stats`);
+      console.log('✅ Stats received!');
       return response.data;
     } catch (error) {
-      console.error('API Error (getUserStats):', error);
+      console.error('Failed to get stats');
       throw error;
     }
   },
@@ -72,13 +113,14 @@ export const API = {
   // Get all cards for user
   getCards: async (userId = 'user123') => {
     try {
-      console.log('API: Getting cards for user:', userId);
+      console.log('🃏 Getting cards...');
       const response = await api.get('/cards', {
         params: { user_id: userId }
       });
+      console.log(`✅ Found ${response.data.length} cards`);
       return response.data;
     } catch (error) {
-      console.error('API Error (getCards):', error);
+      console.error('Failed to get cards');
       throw error;
     }
   },
@@ -86,11 +128,12 @@ export const API = {
   // Add a new card
   addCard: async (cardData) => {
     try {
-      console.log('API: Adding card:', cardData);
+      console.log('➕ Adding card...');
       const response = await api.post('/cards', cardData);
+      console.log('✅ Card added!');
       return response.data;
     } catch (error) {
-      console.error('API Error (addCard):', error);
+      console.error('Failed to add card');
       throw error;
     }
   },
@@ -98,110 +141,15 @@ export const API = {
   // Delete a card
   deleteCard: async (cardId) => {
     try {
-      console.log('API: Deleting card:', cardId);
+      console.log('🗑️  Deleting card...');
       const response = await api.delete(`/cards/${cardId}`);
+      console.log('✅ Card deleted!');
       return response.data;
     } catch (error) {
-      console.error('API Error (deleteCard):', error);
+      console.error('Failed to delete card');
       throw error;
     }
   },
 };
 
-export default API;// // src/services/api.js
-// import axios from 'axios';
-
-// // Configuration
-
-// // for const API_BASE_URL = 'http://127.0.0.1:8000/api/v1';
-// // const API_BASE_URL = 'http://192.168.1.98:8000/api/v1';
-// const API_BASE_URL = 'https://chubby-rats-listen.loca.lt/api/v1'
-
-// const API_TIMEOUT = 30000;
-
-// console.log('🔧 API Configuration Loaded:');
-// console.log('   Base URL:', API_BASE_URL);
-// console.log('   Timeout:', API_TIMEOUT);
-
-// // Create axios instance
-// const apiClient = axios.create({
-//   baseURL: API_BASE_URL,
-//   timeout: API_TIMEOUT,
-//   headers: {
-//     'Content-Type': 'application/json',
-//   },
-// });
-
-// // Response interceptor
-// apiClient.interceptors.response.use(
-//   (response) => {
-//     console.log('✅ Response received:', response.status);
-//     return response;
-//   },
-//   async (error) => {
-//     console.error('❌ Interceptor caught error:', error.message);
-//     const errorMessage = error.response?.data?.detail 
-//       || error.message 
-//       || 'An error occurred';
-    
-//     return Promise.reject(new Error(errorMessage));
-//   }
-// );
-
-// // API Service
-// export const API = {
-//   getRecommendation: async (transactionData) => {
-//     console.log('');
-//     console.log('═══════════════════════════════');
-//     console.log('🚀 API.getRecommendation called');
-//     console.log('═══════════════════════════════');
-//     console.log('Full URL:', `${API_BASE_URL}/recommend`);
-//     console.log('Method: POST');
-//     console.log('Data:', JSON.stringify(transactionData, null, 2));
-    
-//     try {
-//       console.log('📡 Sending request...');
-//       const response = await apiClient.post('/recommend', transactionData);
-//       console.log('✅ Success! Response:', response.data);
-//       return response;
-//     } catch (error) {
-//       console.error('');
-//       console.error('╔═══════════════════════════════╗');
-//       console.error('║       ERROR DETAILS           ║');
-//       console.error('╚═══════════════════════════════╝');
-//       console.error('Error name:', error.name);
-//       console.error('Error message:', error.message);
-//       console.error('Error code:', error.code);
-//       console.error('Has response?', !!error.response);
-//       if (error.response) {
-//         console.error('Response status:', error.response.status);
-//         console.error('Response data:', error.response.data);
-//       }
-//       console.error('Full error:', error);
-//       console.error('');
-//       throw error;
-//     }
-//   },
-
-//   getUserCards: async (userId) => {
-//     return await apiClient.get(`/users/${userId}/cards`);
-//   },
-
-//   getTransactionHistory: async (userId, limit = 50, offset = 0) => {
-//     return await apiClient.get(`/users/${userId}/transactions`, {
-//       params: { limit, offset }
-//     });
-//   },
-
-//   getUserStats: async (userId) => {
-//     return await apiClient.get(`/users/${userId}/stats`);
-//   },
-
-//   getMonthlyRewards: async (userId, months = 6) => {
-//     return await apiClient.get(`/users/${userId}/rewards/monthly`, {
-//       params: { months }
-//     });
-//   },
-// };
-
-// export default API;
+export default API;

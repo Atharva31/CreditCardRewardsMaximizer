@@ -76,8 +76,7 @@ export default function TransactionScreen() {
     } catch (error) {
       console.error('API Error:', error);
       Alert.alert(
-        'Connection Error', 
-        'Could not connect to server. Make sure backend is running.\n\nError: ' + error.message
+         error.message
       );
     } finally {
       setLoading(false);
