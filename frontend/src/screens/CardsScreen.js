@@ -1,10 +1,10 @@
 // src/screens/CardsScreen.js
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
-import { 
-  View, 
-  Text, 
-  StyleSheet, 
-  FlatList, 
+import {
+  View,
+  Text,
+  StyleSheet,
+  FlatList,
   TouchableOpacity,
   Alert,
   ActivityIndicator,
@@ -13,15 +13,24 @@ import {
 import { SafeAreaView } from 'react-native-safe-area-context';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { API } from '../services/api';
+<<<<<<< HEAD
 
 export default function CardsScreen({ navigation, route }) {
   const [USER_ID, setUserId] = useState(null);
+=======
+import axios from 'axios';
 
+const API_BASE_URL = 'http://10.0.0.222:8000';
+>>>>>>> cae5d2f2f118266d9490068b8bd8f79d42f4adc6
+
+export default function CardsScreen() {
+  const [userId, setUserId] = useState(null);
   const [cards, setCards] = useState([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [errorMsg, setErrorMsg] = useState(null);
 
+<<<<<<< HEAD
   // Load user ID from AsyncStorage on mount
   useEffect(() => {
     const loadUserId = async () => {
@@ -47,6 +56,24 @@ export default function CardsScreen({ navigation, route }) {
     };
     loadUserId();
   }, [route?.params?.userId]);
+=======
+  const [showAddModal, setShowAddModal] = useState(false);
+  const [newCard, setNewCard] = useState({
+    name: '',
+    type: 'Visa',
+    rewards: '',
+    last4: '',
+  });
+
+  // Load user ID on mount
+  useEffect(() => {
+    const loadUserId = async () => {
+      const id = await AsyncStorage.getItem('userId');
+      setUserId(id);
+    };
+    loadUserId();
+  }, []);
+>>>>>>> cae5d2f2f118266d9490068b8bd8f79d42f4adc6
 
   const apiCardToUi = useCallback((c) => {
     const rewardsText = Array.isArray(c?.benefits) && c.benefits.length > 0
@@ -70,22 +97,33 @@ export default function CardsScreen({ navigation, route }) {
   }, []);
 
   const fetchCards = useCallback(async () => {
+<<<<<<< HEAD
     if (!USER_ID) {
       console.log('⏳ Waiting for user ID...');
+=======
+    if (!userId) {
+      setLoading(false);
+>>>>>>> cae5d2f2f118266d9490068b8bd8f79d42f4adc6
       return;
     }
 
     setLoading(true);
     setErrorMsg(null);
     try {
+<<<<<<< HEAD
       console.log('🃏 Fetching cards for user:', USER_ID);
       // Use the centralized API service
       const data = await API.getCards(USER_ID);
       const list = Array.isArray(data) ? data : [];
+=======
+      const response = await API.getUserCards(userId);
+      const list = Array.isArray(response.data) ? response.data : [];
+>>>>>>> cae5d2f2f118266d9490068b8bd8f79d42f4adc6
       setCards(list.map(apiCardToUi));
       setErrorMsg(null);
     } catch (err) {
       console.error('Error fetching cards:', err);
+<<<<<<< HEAD
       // Handle different error types
       const status = err?.response?.status;
       if (status === 404) {
@@ -97,11 +135,20 @@ export default function CardsScreen({ navigation, route }) {
         const errorText = err?.response?.data?.detail || err?.message || 'Network error while loading cards. Pull to retry.';
         console.error('Cards fetch error:', errorText);
         setErrorMsg(errorText);
+=======
+      setCards([]);
+
+      // Check if it's a 404 (user not found or no cards)
+      if (err.response?.status === 404) {
+        setErrorMsg(null); // No error for empty state
+      } else {
+        setErrorMsg('Could not load cards. Pull down to retry.');
+>>>>>>> cae5d2f2f118266d9490068b8bd8f79d42f4adc6
       }
     } finally {
       setLoading(false);
     }
-  }, [USER_ID, apiCardToUi]);
+  }, [userId, apiCardToUi]);
 
   const onRefresh = useCallback(async () => {
     setRefreshing(true);
@@ -119,6 +166,7 @@ export default function CardsScreen({ navigation, route }) {
     }
   }, [USER_ID, fetchCards]);
 
+<<<<<<< HEAD
   // Refresh cards when screen comes into focus (e.g., returning from CardLibraryScreen)
   useEffect(() => {
     const unsubscribe = navigation.addListener('focus', () => {
@@ -133,6 +181,54 @@ export default function CardsScreen({ navigation, route }) {
       onCardAdded: fetchCards,
     });
   }, [navigation, USER_ID, fetchCards]);
+=======
+    if (!userId) {
+      Alert.alert('Error', 'User not logged in. Please log in again.');
+      return;
+    }
+
+    setSubmitting(true);
+    try {
+      const payload = {
+        card_name: newCard.name.trim(),
+        issuer: newCard.type,
+        cash_back_rate: {},
+        points_multiplier: {},
+        annual_fee: 0,
+        benefits: newCard.rewards
+          ? newCard.rewards.split(',').map(s => s.trim()).filter(Boolean)
+          : [],
+        last_four_digits: newCard.last4?.trim() || null,
+        credit_limit: null,
+      };
+
+      const res = await axios.post(
+        `${API_BASE_URL}/api/v1/cards?user_id=${encodeURIComponent(userId)}`,
+        payload,
+        {
+          headers: { 'Content-Type': 'application/json' },
+        }
+      );
+
+      const created = res.data;
+      if (!created || typeof created !== 'object') {
+        Alert.alert('Error', 'Unexpected server response.');
+        return;
+      }
+
+      const uiCard = apiCardToUi(created);
+      setCards(prev => [...prev, uiCard]);
+      setShowAddModal(false);
+      setNewCard({ name: '', type: 'Visa', rewards: '', last4: '' });
+      Alert.alert('Success', `${uiCard.name} added to your wallet!`);
+    } catch (error) {
+      console.error('Error adding card:', error);
+      Alert.alert('Error', error.response?.data?.detail || 'Could not add the card.');
+    } finally {
+      setSubmitting(false);
+    }
+  }, [userId, newCard, apiCardToUi]);
+>>>>>>> cae5d2f2f118266d9490068b8bd8f79d42f4adc6
 
   const handleDeleteCard = useCallback((cardId) => {
     Alert.alert(
@@ -145,12 +241,23 @@ export default function CardsScreen({ navigation, route }) {
           style: 'destructive',
           onPress: async () => {
             try {
+<<<<<<< HEAD
               await API.deleteCard(cardId);
               setCards(prev => prev.filter(c => c.id !== cardId));
               Alert.alert('Removed', 'Card has been deactivated.');
             } catch (err) {
               const errorText = err.response?.data?.detail || err.message || 'Could not delete the card.';
               Alert.alert('Error', errorText);
+=======
+              await axios.delete(`${API_BASE_URL}/api/v1/cards/${encodeURIComponent(cardId)}`, {
+                headers: { 'Content-Type': 'application/json' },
+              });
+              setCards(prev => prev.filter(c => c.id !== cardId));
+              Alert.alert('Removed', 'Card has been deactivated.');
+            } catch (error) {
+              console.error('Error deleting card:', error);
+              Alert.alert('Error', error.response?.data?.detail || 'Could not delete the card.');
+>>>>>>> cae5d2f2f118266d9490068b8bd8f79d42f4adc6
             }
           },
         },
