@@ -75,8 +75,48 @@ export const API = {
     }
   },
 
+  // Legacy endpoint (old CreditCard model)
   getUserCards: async (userId) => {
     return await apiClient.get(`/users/${userId}/cards`);
+  },
+
+  // New UserCreditCard (Wallet) endpoints
+  getWalletCards: async (userId, activeOnly = true) => {
+    console.log('🔧 API.getWalletCards called for user:', userId);
+    return await apiClient.get(`/users/${userId}/wallet/cards`, {
+      params: { active_only: activeOnly }
+    });
+  },
+
+  addCardToWallet: async (userId, cardData) => {
+    console.log('🔧 API.addCardToWallet called');
+    console.log('User:', userId);
+    console.log('Card Data:', cardData);
+    return await apiClient.post(`/users/${userId}/wallet/cards`, cardData);
+  },
+
+  updateWalletCard: async (userCardId, updateData) => {
+    console.log('🔧 API.updateWalletCard called for card:', userCardId);
+    return await apiClient.put(`/wallet/cards/${userCardId}`, updateData);
+  },
+
+  deleteWalletCard: async (userCardId, permanent = false) => {
+    console.log('🔧 API.deleteWalletCard called for card:', userCardId);
+    return await apiClient.delete(`/wallet/cards/${userCardId}`, {
+      params: { permanent }
+    });
+  },
+
+  getWalletCardDetails: async (userCardId) => {
+    return await apiClient.get(`/wallet/cards/${userCardId}`);
+  },
+
+  // Card Library endpoints
+  getCardLibrary: async (filters = {}) => {
+    console.log('🔧 API.getCardLibrary called with filters:', filters);
+    return await apiClient.get('/cards/library', {
+      params: filters
+    });
   },
 
   getTransactionHistory: async (userId, limit = 50, offset = 0) => {
