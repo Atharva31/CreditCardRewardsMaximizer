@@ -148,6 +148,51 @@ export const API = {
   getUserProfile: async (userId) => {
     return await apiClient.get(`/users/${userId}/profile`);
   },
+
+  // Location-based methods
+  getNearbyPlaces: async (latitude, longitude, radius = 2000) => {
+    console.log('');
+    console.log('═══════════════════════════════');
+    console.log('🚀 API.getNearbyPlaces called');
+    console.log('═══════════════════════════════');
+    console.log('Location:', { latitude, longitude, radius });
+
+    try {
+      const response = await apiClient.post('/location/nearby-places', {
+        latitude,
+        longitude,
+        radius
+      });
+      console.log('✅ Nearby places fetched:', response.data.length, 'places');
+      return response;
+    } catch (error) {
+      console.error('❌ Error fetching nearby places:', error.message);
+      throw error;
+    }
+  },
+
+  getLocationBasedRecommendations: async (userId, latitude, longitude, radius = 2000) => {
+    console.log('');
+    console.log('═══════════════════════════════');
+    console.log('🚀 API.getLocationBasedRecommendations called');
+    console.log('═══════════════════════════════');
+    console.log('User ID:', userId);
+    console.log('Location:', { latitude, longitude, radius });
+
+    try {
+      const response = await apiClient.post('/location/recommendations', {
+        user_id: userId,
+        latitude,
+        longitude,
+        radius
+      });
+      console.log('✅ Location-based recommendations fetched:', response.data.top_recommendations.length, 'recommendations');
+      return response;
+    } catch (error) {
+      console.error('❌ Error fetching location recommendations:', error.message);
+      throw error;
+    }
+  },
 };
 
 export default API;

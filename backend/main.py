@@ -47,6 +47,9 @@ from agentic_enhancements import (
 # Import auth utilities
 from auth import hash_password, verify_password, generate_user_id
 
+# Import location service
+from location_service import location_service
+
 app = FastAPI(
     title="Agentic Wallet API",
     version="2.0.0",
@@ -188,8 +191,55 @@ class AuthResponse(BaseModel):
     email: str
     full_name: str
     message: str
-    
-    
+
+
+class LocationRequest(BaseModel):
+    """Schema for location-based requests"""
+    latitude: float = Field(..., ge=-90, le=90, description="Latitude coordinate")
+    longitude: float = Field(..., ge=-180, le=180, description="Longitude coordinate")
+    radius: Optional[int] = Field(default=2000, ge=100, le=5000, description="Search radius in meters")
+
+
+class NearbyPlace(BaseModel):
+    """Schema for a nearby place"""
+    place_id: str
+    name: str
+    category: str
+    place_types: List[str]
+    address: str
+    latitude: float
+    longitude: float
+    rating: Optional[float]
+    price_level: Optional[int]
+    is_open: Optional[bool]
+    distance_meters: float
+    distance_formatted: str
+
+
+class LocationBasedRecommendationRequest(BaseModel):
+    """Schema for location-based card recommendation"""
+    user_id: str
+    latitude: float = Field(..., ge=-90, le=90)
+    longitude: float = Field(..., ge=-180, le=180)
+    radius: Optional[int] = Field(default=2000, ge=100, le=5000)
+
+
+class PlaceRecommendation(BaseModel):
+    """Schema for a place with card recommendation"""
+    place: NearbyPlace
+    recommended_card: RecommendedCardSimple
+    expected_reward: float
+    reward_explanation: str
+
+
+class LocationBasedRecommendationResponse(BaseModel):
+    """Schema for location-based recommendation response"""
+    user_location: Dict[str, float]
+    places_analyzed: int
+    top_recommendations: List[PlaceRecommendation]
+    timestamp: datetime
+
+
 # ============================================================================
 # STARTUP EVENT - Initialize Database
 # ============================================================================
@@ -912,21 +962,231 @@ async def delete_credit_card(
     """Delete (deactivate) a credit card"""
     try:
         success = deactivate_card(db, card_id)
-        
+
         if not success:
             raise HTTPException(status_code=404, detail="Card not found")
-        
+
         return {
             "status": "success",
             "message": f"Card {card_id} has been deactivated",
             "card_id": card_id
         }
-        
+
     except HTTPException:
         raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error deleting card: {str(e)}")
-        
+
+
+# ============================================================================
+# LOCATION-BASED RECOMMENDATION ENDPOINTS
+# ============================================================================
+
+@app.post("/api/v1/location/nearby-places", response_model=List[NearbyPlace])
+async def get_nearby_places(request: LocationRequest):
+    """
+    Get nearby places based on user's location
+
+    Returns list of nearby merchants and places sorted by distance
+    """
+    try:
+        logger.info(f"Fetching nearby places for location: ({request.latitude}, {request.longitude})")
+
+        places = location_service.get_nearby_places(
+            latitude=request.latitude,
+            longitude=request.longitude,
+            radius=request.radius
+        )
+
+        # Format response
+        formatted_places = []
+        for place in places:
+            formatted_places.append(NearbyPlace(
+                place_id=place['place_id'],
+                name=place['name'],
+                category=place['category'],
+                place_types=place['place_types'],
+                address=place['address'],
+                latitude=place['latitude'],
+                longitude=place['longitude'],
+                rating=place.get('rating'),
+                price_level=place.get('price_level'),
+                is_open=place.get('is_open'),
+                distance_meters=place['distance_meters'],
+                distance_formatted=location_service.format_distance(place['distance_meters'])
+            ))
+
+        logger.info(f"Found {len(formatted_places)} nearby places")
+        return formatted_places
+
+    except Exception as e:
+        logger.error(f"Error getting nearby places: {e}", exc_info=True)
+        raise HTTPException(
+            status_code=500,
+            detail=f"Error fetching nearby places: {str(e)}"
+        )
+
+
+@app.post("/api/v1/location/recommendations", response_model=LocationBasedRecommendationResponse)
+async def get_location_based_recommendations(
+    request: LocationBasedRecommendationRequest,
+    db: Session = Depends(get_db)
+):
+    """
+    Get credit card recommendations for nearby places
+
+    Analyzes nearby merchants and recommends the best card for each location
+    Returns top 5 places with card recommendations
+    """
+    try:
+        logger.info(f"Getting location-based recommendations for user {request.user_id}")
+
+        # Get user and their cards
+        user = get_user(db, request.user_id)
+        if not user:
+            raise HTTPException(status_code=404, detail="User not found")
+
+        user_cards = get_user_cards(db, request.user_id)
+        if not user_cards:
+            raise HTTPException(
+                status_code=400,
+                detail="User has no credit cards. Please add cards first."
+            )
+
+        # Convert SQLAlchemy models to dictionaries for AI agent
+        user_cards_dict = [
+            {
+                "card_id": card.card_id,
+                "card_name": card.card_name,
+                "issuer": card.issuer.value,
+                "cash_back_rate": card.cash_back_rate,
+                "points_multiplier": card.points_multiplier,
+                "annual_fee": card.annual_fee,
+                "benefits": card.benefits or []
+            }
+            for card in user_cards
+        ]
+
+        # Get nearby places
+        nearby_places = location_service.get_nearby_places(
+            latitude=request.latitude,
+            longitude=request.longitude,
+            radius=request.radius
+        )
+
+        if not nearby_places:
+            return LocationBasedRecommendationResponse(
+                user_location={'latitude': request.latitude, 'longitude': request.longitude},
+                places_analyzed=0,
+                top_recommendations=[],
+                timestamp=datetime.utcnow()
+            )
+
+        # Get recommendations for each place
+        place_recommendations = []
+
+        for place in nearby_places[:10]:  # Analyze top 10 closest places
+            try:
+                # Prepare transaction data for the agentic system
+                # Get user's optimization goal (default to balanced if not set)
+                opt_goal = user.default_optimization_goal
+                if opt_goal and hasattr(opt_goal, 'value'):
+                    opt_goal_value = opt_goal.value
+                else:
+                    opt_goal_value = 'balanced'
+
+                transaction_data = {
+                    'merchant': place['name'],
+                    'amount': 50.0,  # Use average transaction amount
+                    'category': place['category'],
+                    'optimization_goal': opt_goal_value,
+                    'location': place['address']
+                }
+
+                # Use the agentic system to recommend best card for this place
+                recommendation = agentic_system.get_recommendation(
+                    transaction_data=transaction_data,
+                    user_cards=user_cards_dict
+                )
+
+                # Skip if there was an error
+                if 'error' in recommendation:
+                    logger.warning(f"Recommendation error for {place['name']}: {recommendation.get('message')}")
+                    continue
+
+                # Calculate reward for this place (expected_value is inside recommended_card)
+                rec_card = recommendation.get('recommended_card', {})
+                expected_reward = rec_card.get('expected_value', 0)
+
+                # Skip if no valid reward
+                if expected_reward <= 0:
+                    continue
+
+                place_recommendations.append({
+                    'place': place,
+                    'recommendation': recommendation,
+                    'expected_reward': expected_reward,
+                    'score': expected_reward / (place['distance_meters'] / 100)  # Score: reward per 100m
+                })
+
+            except Exception as e:
+                logger.warning(f"Error getting recommendation for {place['name']}: {e}")
+                continue
+
+        # Sort by score (best reward/distance ratio) and take top 5
+        place_recommendations.sort(key=lambda x: x['score'], reverse=True)
+        top_5 = place_recommendations[:5]
+
+        # Format response
+        formatted_recommendations = []
+        for item in top_5:
+            place = item['place']
+            rec = item['recommendation']
+            rec_card = rec.get('recommended_card', {})
+
+            formatted_recommendations.append(PlaceRecommendation(
+                place=NearbyPlace(
+                    place_id=place['place_id'],
+                    name=place['name'],
+                    category=place['category'],
+                    place_types=place['place_types'],
+                    address=place['address'],
+                    latitude=place['latitude'],
+                    longitude=place['longitude'],
+                    rating=place.get('rating'),
+                    price_level=place.get('price_level'),
+                    is_open=place.get('is_open'),
+                    distance_meters=place['distance_meters'],
+                    distance_formatted=location_service.format_distance(place['distance_meters'])
+                ),
+                recommended_card=RecommendedCardSimple(
+                    card_name=rec_card.get('card_name', 'Unknown'),
+                    reason=rec_card.get('explanation', 'Best rewards for this category'),
+                    estimated_value=f"${rec_card.get('expected_value', 0):.2f}"
+                ),
+                expected_reward=item['expected_reward'],
+                reward_explanation=f"Earn ${item['expected_reward']:.2f} in rewards at {place['name']}"
+            ))
+
+        logger.info(f"Returning {len(formatted_recommendations)} location-based recommendations")
+
+        return LocationBasedRecommendationResponse(
+            user_location={'latitude': request.latitude, 'longitude': request.longitude},
+            places_analyzed=len(nearby_places),
+            top_recommendations=formatted_recommendations,
+            timestamp=datetime.utcnow()
+        )
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error in location-based recommendations: {e}", exc_info=True)
+        raise HTTPException(
+            status_code=500,
+            detail=f"Error generating location-based recommendations: {str(e)}"
+        )
+
+
 
 # ============================================================================
 # DATABASE MANAGEMENT ENDPOINTS (Development/Admin only)
