@@ -8,11 +8,13 @@ from sqlalchemy import and_, or_, func, desc
 from typing import List, Optional, Dict
 from datetime import datetime, timedelta
 import uuid
+import json
+import os
 
 from models import (
     User, CreditCard, CardBenefit, Transaction, TransactionFeedback,
     UserBehavior, AutomationRule, Merchant, Offer, AIModelMetrics,
-    OptimizationGoalEnum, CategoryEnum
+    OptimizationGoalEnum, CategoryEnum, CardIssuerEnum
 )
 
 
@@ -142,10 +144,72 @@ def deactivate_card(db: Session, card_id: str) -> bool:
     card = get_card(db, card_id)
     if not card:
         return False
-    
+
     card.is_active = False
     db.commit()
     return True
+
+
+def create_credit_cards_from_library(db: Session, user_id: str) -> List[CreditCard]:
+    """
+    Seed credit cards from the card_library.json file for a user.
+    Reads all card data from seed_data/card_library.json and creates them in the database.
+
+    Args:
+        db: Database session
+        user_id: User ID to associate cards with
+
+    Returns:
+        List of created CreditCard objects
+    """
+    # Determine the path to the seed data file
+    current_dir = os.path.dirname(os.path.abspath(__file__))
+    library_path = os.path.join(current_dir, "seed_data", "card_library.json")
+
+    if not os.path.exists(library_path):
+        print(f"⚠️  Card library file not found at: {library_path}")
+        return []
+
+    # Read the JSON file
+    try:
+        with open(library_path, 'r') as f:
+            cards_data = json.load(f)
+    except Exception as e:
+        print(f"❌ Error reading card library: {e}")
+        return []
+
+    created_cards = []
+
+    # Process each card in the library
+    for card_data in cards_data:
+        try:
+            # Map issuer string to CardIssuerEnum
+            issuer_name = card_data.get("issuer", "Other")
+            try:
+                issuer_enum = CardIssuerEnum(issuer_name)
+            except ValueError:
+                # If issuer not in enum, use OTHER
+                issuer_enum = CardIssuerEnum.OTHER
+
+            # Create the credit card
+            card = create_credit_card(
+                db=db,
+                user_id=user_id,
+                card_name=card_data["card_name"],
+                issuer=issuer_enum,
+                cash_back_rate=card_data["cash_back_rate"],
+                points_multiplier=card_data["points_multiplier"],
+                annual_fee=card_data.get("annual_fee", 0.0),
+                benefits=card_data.get("benefits", [])
+            )
+            created_cards.append(card)
+
+        except Exception as e:
+            print(f"⚠️  Error creating card '{card_data.get('card_name', 'Unknown')}': {e}")
+            continue
+
+    print(f"✅ Created {len(created_cards)} cards from library")
+    return created_cards
 
 
 # ============================================================================

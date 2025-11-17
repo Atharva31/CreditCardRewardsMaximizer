@@ -4,8 +4,8 @@ Combined init + seed for Docker startup
 """
 
 from database import db
-from crud import create_user, create_credit_card
-from models import Base, OptimizationGoalEnum, CardIssuerEnum
+from crud import create_user, create_credit_cards_from_library
+from models import Base, OptimizationGoalEnum
 from auth import hash_password
 
 
@@ -41,61 +41,20 @@ def init_and_seed_database():
         print(f"   ✅ Created user: {user.email}")
         print(f"   🔑 USER_ID: {user.user_id}")
         print(f"   🔐 Default Password: password123")
-        
-        # Create test credit cards
-        print(f"\n💳 Creating credit cards...")
-        
-        chase = create_credit_card(
-            session,
-            user_id=user.user_id,
-            card_name="Chase Sapphire Reserve",
-            issuer=CardIssuerEnum.CHASE,
-            cash_back_rate={"dining": 0.03, "travel": 0.03, "other": 0.01},
-            points_multiplier={"dining": 3.0, "travel": 3.0, "other": 1.0},
-            annual_fee=550.0,
-            benefits=["Airport Lounge Access", "Travel Insurance", "$300 Travel Credit"],
-            last_four_digits="4123",
-            credit_limit=20000.0
-        )
-        print(f"   ✅ {chase.card_name}")
-        
-        citi = create_credit_card(
-            session,
-            user_id=user.user_id,
-            card_name="Citi Double Cash",
-            issuer=CardIssuerEnum.CITI,
-            cash_back_rate={"dining": 0.02, "travel": 0.02, "groceries": 0.02, "gas": 0.02, "other": 0.02},
-            points_multiplier={"dining": 0.0, "travel": 0.0, "other": 0.0},
-            annual_fee=0.0,
-            benefits=["2% Cash Back on Everything"],
-            last_four_digits="8765",
-            credit_limit=15000.0
-        )
-        print(f"   ✅ {citi.card_name}")
-        
-        amex = create_credit_card(
-            session,
-            user_id=user.user_id,
-            card_name="American Express Gold",
-            issuer=CardIssuerEnum.AMEX,
-            cash_back_rate={"dining": 0.04, "groceries": 0.04, "other": 0.01},
-            points_multiplier={"dining": 4.0, "groceries": 4.0, "other": 1.0},
-            annual_fee=250.0,
-            benefits=["Dining Credits", "Uber Credits", "No Foreign Fees"],
-            last_four_digits="1005",
-            credit_limit=25000.0
-        )
-        print(f"   ✅ {amex.card_name}")
-        
+
+        # Load all credit cards from the card library
+        print(f"\n💳 Loading credit cards from library...")
+        library_cards = create_credit_cards_from_library(session, user.user_id)
+
         session.commit()
-        
+
         print("\n" + "="*60)
         print("✨ DATABASE READY!")
         print("="*60)
         print(f"\n📊 Test Account:")
         print(f"   Email: {user.email}")
         print(f"   User ID: {user.user_id}")
-        print(f"   Cards: 3 (Chase, Citi, Amex)")
+        print(f"   Cards: {len(library_cards)} cards from library")
         print(f"\n🔗 API Base URL: http://localhost:8000/api/v1")
         print(f"   Test endpoint: GET /api/v1/users/{user.user_id}/cards")
         print("="*60 + "\n")
