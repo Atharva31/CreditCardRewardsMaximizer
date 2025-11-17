@@ -29,7 +29,11 @@ from crud import (
     calculate_transaction_stats, create_transaction_feedback,
     get_user_behavior, update_user_behavior, create_automation_rule,
     get_user_automation_rules, get_or_create_merchant, create_credit_card, update_card, deactivate_card, get_card,
-    get_user_analytics
+    get_user_analytics,
+    # New UserCreditCard CRUD operations
+    add_user_credit_card, get_user_credit_cards, get_user_credit_card,
+    update_user_credit_card, delete_user_credit_card, deactivate_user_credit_card,
+    get_user_cards_with_details
 )
 from models import (
     User as UserModel, CreditCard as CreditCardModel,
@@ -168,7 +172,51 @@ class CreditCardUpdateRequest(BaseModel):
     annual_fee: Optional[float] = Field(None, ge=0)
     benefits: Optional[List[str]] = None
     credit_limit: Optional[float] = Field(None, ge=0)
+
+
+# ============================================================================
+# USER CREDIT CARD SCHEMAS (User's owned cards)
+# ============================================================================
+
+class UserCreditCardCreate(BaseModel):
+    """Schema for adding a card from library to user's wallet"""
+    card_id: str = Field(..., description="Card ID from the card library")
+    nickname: Optional[str] = Field(None, max_length=255, description="Custom nickname for the card")
+    last_four_digits: Optional[str] = Field(None, max_length=4, min_length=4, description="Last 4 digits of actual card")
+    credit_limit: Optional[float] = Field(None, ge=0, description="User's credit limit")
+
+
+class UserCreditCardUpdate(BaseModel):
+    """Schema for updating user's credit card details"""
+    nickname: Optional[str] = Field(None, max_length=255)
+    last_four_digits: Optional[str] = Field(None, max_length=4, min_length=4)
+    credit_limit: Optional[float] = Field(None, ge=0)
+    current_balance: Optional[float] = Field(None, ge=0)
     is_active: Optional[bool] = None
+
+
+class UserCreditCardResponse(BaseModel):
+    """Schema for user credit card response with full details"""
+    # User-specific fields
+    user_card_id: int
+    nickname: Optional[str]
+    last_four_digits: Optional[str]
+    credit_limit: Optional[float]
+    current_balance: float
+    is_active: bool
+    activation_date: datetime
+
+    # Card library fields
+    card_id: str
+    card_name: str
+    issuer: str
+    annual_fee: float
+    cash_back_rate: Dict[str, float]
+    points_multiplier: Dict[str, float]
+    benefits: List[str]
+
+    class Config:
+        from_attributes = True
 
 
 class SignupRequest(BaseModel):
@@ -976,6 +1024,262 @@ async def delete_credit_card(
         raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error deleting card: {str(e)}")
+
+
+# ============================================================================
+# USER CREDIT CARD ENDPOINTS (User's owned cards from library)
+# ============================================================================
+
+@app.get("/api/v1/users/{user_id}/wallet/cards", response_model=List[UserCreditCardResponse])
+async def get_user_wallet_cards(
+    user_id: str,
+    active_only: bool = True,
+    db: Session = Depends(get_db)
+):
+    """
+    Get all credit cards in user's wallet with full details.
+    This combines user-specific data (nickname, last 4 digits) with card library data.
+    """
+    try:
+        user = get_user(db, user_id)
+        if not user:
+            raise HTTPException(status_code=404, detail="User not found")
+
+        cards_with_details = get_user_cards_with_details(db, user_id, active_only)
+        return cards_with_details
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/api/v1/users/{user_id}/wallet/cards", response_model=UserCreditCardResponse, status_code=201)
+async def add_card_to_wallet(
+    user_id: str,
+    card_request: UserCreditCardCreate,
+    db: Session = Depends(get_db)
+):
+    """
+    Add a credit card from the library to user's wallet.
+    This creates a user-card association with optional custom details.
+    """
+    try:
+        user = get_user(db, user_id)
+        if not user:
+            raise HTTPException(status_code=404, detail="User not found")
+
+        # Add the card to user's wallet
+        user_card = add_user_credit_card(
+            db,
+            user_id=user_id,
+            card_id=card_request.card_id,
+            nickname=card_request.nickname,
+            last_four_digits=card_request.last_four_digits,
+            credit_limit=card_request.credit_limit
+        )
+
+        if not user_card:
+            raise HTTPException(
+                status_code=400,
+                detail="Card already exists in wallet or card not found in library"
+            )
+
+        # Return full details
+        card = user_card.credit_card
+        return UserCreditCardResponse(
+            user_card_id=user_card.user_card_id,
+            nickname=user_card.nickname,
+            last_four_digits=user_card.last_four_digits,
+            credit_limit=user_card.credit_limit,
+            current_balance=user_card.current_balance,
+            is_active=user_card.is_active,
+            activation_date=user_card.activation_date,
+            card_id=card.card_id,
+            card_name=card.card_name,
+            issuer=card.issuer.value,
+            annual_fee=card.annual_fee,
+            cash_back_rate=card.cash_back_rate,
+            points_multiplier=card.points_multiplier,
+            benefits=card.benefits or []
+        )
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error adding card to wallet: {str(e)}")
+
+
+@app.put("/api/v1/wallet/cards/{user_card_id}", response_model=UserCreditCardResponse)
+async def update_wallet_card(
+    user_card_id: int,
+    card_update: UserCreditCardUpdate,
+    db: Session = Depends(get_db)
+):
+    """
+    Update user-specific details of a credit card in their wallet.
+    Can update nickname, last 4 digits, credit limit, balance, or active status.
+    """
+    try:
+        update_data = card_update.dict(exclude_unset=True)
+        updated_user_card = update_user_credit_card(db, user_card_id, **update_data)
+
+        if not updated_user_card:
+            raise HTTPException(status_code=404, detail="User card not found")
+
+        # Return full details
+        card = updated_user_card.credit_card
+        return UserCreditCardResponse(
+            user_card_id=updated_user_card.user_card_id,
+            nickname=updated_user_card.nickname,
+            last_four_digits=updated_user_card.last_four_digits,
+            credit_limit=updated_user_card.credit_limit,
+            current_balance=updated_user_card.current_balance,
+            is_active=updated_user_card.is_active,
+            activation_date=updated_user_card.activation_date,
+            card_id=card.card_id,
+            card_name=card.card_name,
+            issuer=card.issuer.value,
+            annual_fee=card.annual_fee,
+            cash_back_rate=card.cash_back_rate,
+            points_multiplier=card.points_multiplier,
+            benefits=card.benefits or []
+        )
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error updating wallet card: {str(e)}")
+
+
+@app.delete("/api/v1/wallet/cards/{user_card_id}", status_code=200)
+async def remove_card_from_wallet(
+    user_card_id: int,
+    permanent: bool = False,
+    db: Session = Depends(get_db)
+):
+    """
+    Remove a credit card from user's wallet.
+    If permanent=False (default), the card is deactivated (soft delete).
+    If permanent=True, the card is completely removed from the wallet.
+    """
+    try:
+        if permanent:
+            success = delete_user_credit_card(db, user_card_id)
+            message = f"Card {user_card_id} permanently removed from wallet"
+        else:
+            success = deactivate_user_credit_card(db, user_card_id)
+            message = f"Card {user_card_id} deactivated in wallet"
+
+        if not success:
+            raise HTTPException(status_code=404, detail="User card not found")
+
+        return {
+            "status": "success",
+            "message": message,
+            "user_card_id": user_card_id,
+            "permanent": permanent
+        }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error removing card from wallet: {str(e)}")
+
+
+@app.get("/api/v1/wallet/cards/{user_card_id}", response_model=UserCreditCardResponse)
+async def get_wallet_card_details(
+    user_card_id: int,
+    db: Session = Depends(get_db)
+):
+    """Get detailed information about a specific card in user's wallet"""
+    try:
+        user_card = get_user_credit_card(db, user_card_id)
+        if not user_card:
+            raise HTTPException(status_code=404, detail="User card not found")
+
+        card = user_card.credit_card
+        return UserCreditCardResponse(
+            user_card_id=user_card.user_card_id,
+            nickname=user_card.nickname,
+            last_four_digits=user_card.last_four_digits,
+            credit_limit=user_card.credit_limit,
+            current_balance=user_card.current_balance,
+            is_active=user_card.is_active,
+            activation_date=user_card.activation_date,
+            card_id=card.card_id,
+            card_name=card.card_name,
+            issuer=card.issuer.value,
+            annual_fee=card.annual_fee,
+            cash_back_rate=card.cash_back_rate,
+            points_multiplier=card.points_multiplier,
+            benefits=card.benefits or []
+        )
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# ============================================================================
+# CARD LIBRARY ENDPOINTS (Browse available cards)
+# ============================================================================
+
+@app.get("/api/v1/cards/library", response_model=List[CreditCard])
+async def get_card_library(
+    issuer: Optional[str] = None,
+    min_fee: Optional[float] = None,
+    max_fee: Optional[float] = None,
+    limit: int = 100,
+    db: Session = Depends(get_db)
+):
+    """
+    Get available credit cards from the library.
+    Users can browse and add these cards to their wallet.
+    """
+    try:
+        from sqlalchemy import and_
+
+        query = db.query(CreditCardModel)
+
+        # Apply filters
+        filters = []
+        if issuer:
+            from models import CardIssuerEnum
+            try:
+                issuer_enum = CardIssuerEnum(issuer)
+                filters.append(CreditCardModel.issuer == issuer_enum)
+            except ValueError:
+                pass
+
+        if min_fee is not None:
+            filters.append(CreditCardModel.annual_fee >= min_fee)
+
+        if max_fee is not None:
+            filters.append(CreditCardModel.annual_fee <= max_fee)
+
+        if filters:
+            query = query.filter(and_(*filters))
+
+        cards = query.limit(limit).all()
+
+        return [
+            CreditCard(
+                card_id=card.card_id,
+                card_name=card.card_name,
+                issuer=card.issuer.value,
+                cash_back_rate=card.cash_back_rate,
+                points_multiplier=card.points_multiplier,
+                annual_fee=card.annual_fee,
+                benefits=card.benefits or [],
+                is_active=card.is_active
+            )
+            for card in cards
+        ]
+
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 # ============================================================================

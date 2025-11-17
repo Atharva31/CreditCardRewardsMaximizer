@@ -12,7 +12,7 @@ import json
 import os
 
 from models import (
-    User, CreditCard, CardBenefit, Transaction, TransactionFeedback,
+    User, CreditCard, UserCreditCard, CardBenefit, Transaction, TransactionFeedback,
     UserBehavior, AutomationRule, Merchant, Offer, AIModelMetrics,
     OptimizationGoalEnum, CategoryEnum, CardIssuerEnum
 )
@@ -210,6 +210,231 @@ def create_credit_cards_from_library(db: Session, user_id: str) -> List[CreditCa
 
     print(f"✅ Created {len(created_cards)} cards from library")
     return created_cards
+
+
+# ============================================================================
+# USER CREDIT CARD OPERATIONS (User's owned cards from library)
+# ============================================================================
+
+def add_user_credit_card(
+    db: Session,
+    user_id: str,
+    card_id: str,
+    nickname: Optional[str] = None,
+    last_four_digits: Optional[str] = None,
+    credit_limit: Optional[float] = None
+) -> Optional[UserCreditCard]:
+    """
+    Add a credit card from the library to a user's wallet.
+
+    Args:
+        db: Database session
+        user_id: User ID
+        card_id: Credit card ID from the card library
+        nickname: Optional custom name for the card
+        last_four_digits: Last 4 digits of the user's actual card
+        credit_limit: User's credit limit for this card
+
+    Returns:
+        UserCreditCard object or None if card already exists
+    """
+    # Check if user already has this card
+    existing = db.query(UserCreditCard).filter(
+        and_(
+            UserCreditCard.user_id == user_id,
+            UserCreditCard.card_id == card_id
+        )
+    ).first()
+
+    if existing:
+        print(f"⚠️  User already has this card")
+        return None
+
+    # Verify the card exists in the library
+    card = get_card(db, card_id)
+    if not card:
+        print(f"⚠️  Card {card_id} not found in library")
+        return None
+
+    # Create user credit card
+    user_card = UserCreditCard(
+        user_id=user_id,
+        card_id=card_id,
+        nickname=nickname,
+        last_four_digits=last_four_digits,
+        credit_limit=credit_limit,
+        is_active=True
+    )
+
+    db.add(user_card)
+    db.commit()
+    db.refresh(user_card)
+    return user_card
+
+
+def get_user_credit_cards(
+    db: Session,
+    user_id: str,
+    active_only: bool = True
+) -> List[UserCreditCard]:
+    """
+    Get all credit cards owned by a user.
+
+    Args:
+        db: Database session
+        user_id: User ID
+        active_only: Only return active cards
+
+    Returns:
+        List of UserCreditCard objects with relationships loaded
+    """
+    query = db.query(UserCreditCard).filter(UserCreditCard.user_id == user_id)
+    if active_only:
+        query = query.filter(UserCreditCard.is_active == True)
+    return query.all()
+
+
+def get_user_credit_card(
+    db: Session,
+    user_card_id: int
+) -> Optional[UserCreditCard]:
+    """Get a specific user credit card by ID"""
+    return db.query(UserCreditCard).filter(
+        UserCreditCard.user_card_id == user_card_id
+    ).first()
+
+
+def get_user_credit_card_by_card_id(
+    db: Session,
+    user_id: str,
+    card_id: str
+) -> Optional[UserCreditCard]:
+    """Get a user's credit card by the library card ID"""
+    return db.query(UserCreditCard).filter(
+        and_(
+            UserCreditCard.user_id == user_id,
+            UserCreditCard.card_id == card_id
+        )
+    ).first()
+
+
+def update_user_credit_card(
+    db: Session,
+    user_card_id: int,
+    **kwargs
+) -> Optional[UserCreditCard]:
+    """
+    Update a user's credit card information.
+
+    Args:
+        db: Database session
+        user_card_id: UserCreditCard ID
+        **kwargs: Fields to update (nickname, last_four_digits, credit_limit, is_active, etc.)
+
+    Returns:
+        Updated UserCreditCard object or None if not found
+    """
+    user_card = get_user_credit_card(db, user_card_id)
+    if not user_card:
+        return None
+
+    for key, value in kwargs.items():
+        if hasattr(user_card, key):
+            setattr(user_card, key, value)
+
+    db.commit()
+    db.refresh(user_card)
+    return user_card
+
+
+def delete_user_credit_card(
+    db: Session,
+    user_card_id: int
+) -> bool:
+    """
+    Delete (remove) a credit card from user's wallet.
+
+    Args:
+        db: Database session
+        user_card_id: UserCreditCard ID
+
+    Returns:
+        True if deleted, False if not found
+    """
+    user_card = get_user_credit_card(db, user_card_id)
+    if not user_card:
+        return False
+
+    db.delete(user_card)
+    db.commit()
+    return True
+
+
+def deactivate_user_credit_card(
+    db: Session,
+    user_card_id: int
+) -> bool:
+    """
+    Deactivate a user's credit card (soft delete).
+
+    Args:
+        db: Database session
+        user_card_id: UserCreditCard ID
+
+    Returns:
+        True if deactivated, False if not found
+    """
+    user_card = get_user_credit_card(db, user_card_id)
+    if not user_card:
+        return False
+
+    user_card.is_active = False
+    db.commit()
+    return True
+
+
+def get_user_cards_with_details(
+    db: Session,
+    user_id: str,
+    active_only: bool = True
+) -> List[Dict]:
+    """
+    Get user's credit cards with full card library details.
+
+    Args:
+        db: Database session
+        user_id: User ID
+        active_only: Only return active cards
+
+    Returns:
+        List of dictionaries with combined UserCreditCard and CreditCard data
+    """
+    user_cards = get_user_credit_cards(db, user_id, active_only)
+
+    result = []
+    for user_card in user_cards:
+        card = user_card.credit_card
+        result.append({
+            # User-specific data
+            "user_card_id": user_card.user_card_id,
+            "nickname": user_card.nickname,
+            "last_four_digits": user_card.last_four_digits,
+            "credit_limit": user_card.credit_limit,
+            "current_balance": user_card.current_balance,
+            "is_active": user_card.is_active,
+            "activation_date": user_card.activation_date,
+
+            # Card library data
+            "card_id": card.card_id,
+            "card_name": card.card_name,
+            "issuer": card.issuer.value,
+            "annual_fee": card.annual_fee,
+            "cash_back_rate": card.cash_back_rate,
+            "points_multiplier": card.points_multiplier,
+            "benefits": card.benefits,
+        })
+
+    return result
 
 
 # ============================================================================
