@@ -23,20 +23,11 @@ export default function CardsScreen() {
   const [libraryCards, setLibraryCards] = useState([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
-  const [submitting, setSubmitting] = useState(false);
   const [errorMsg, setErrorMsg] = useState(null);
 
   const [showLibraryModal, setShowLibraryModal] = useState(false);
-  const [showEditModal, setShowEditModal] = useState(false);
-  const [selectedCard, setSelectedCard] = useState(null);
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedIssuer, setSelectedIssuer] = useState('All');
-
-  const [editFormData, setEditFormData] = useState({
-    nickname: '',
-    last_four_digits: '',
-    credit_limit: '',
-  });
 
   // Load user ID on mount
   useEffect(() => {
@@ -53,7 +44,7 @@ export default function CardsScreen() {
       id: c?.user_card_id ?? String(Math.random()),
       userCardId: c?.user_card_id,
       cardId: c?.card_id,
-      name: c?.nickname || c?.card_name || 'Card',
+      name: c?.card_name || 'Card',
       cardName: c?.card_name,
       issuer: c?.issuer ?? 'Unknown',
       lastFour: c?.last_four_digits,
@@ -147,19 +138,18 @@ export default function CardsScreen() {
       return;
     }
 
-    Alert.prompt(
+    Alert.alert(
       'Add to Wallet',
-      `Add ${libraryCard.name} to your wallet?\n\nOptional: Enter a nickname for this card`,
+      `Add ${libraryCard.name} to your wallet?`,
       [
         { text: 'Cancel', style: 'cancel' },
         {
           text: 'Add',
-          onPress: async (nickname) => {
-            setSubmitting(true);
+          onPress: async () => {
             try {
               const payload = {
                 card_id: libraryCard.cardId,
-                nickname: nickname?.trim() || null,
+                nickname: null,
                 last_four_digits: null,
                 credit_limit: null,
               };
@@ -174,73 +164,13 @@ export default function CardsScreen() {
               console.error('Error adding card:', error);
               const message = error.response?.data?.detail || error.message || 'Could not add card';
               Alert.alert('Error', message);
-            } finally {
-              setSubmitting(false);
             }
           },
         },
-      ],
-      'plain-text',
-      '',
-      'default'
+      ]
     );
   }, [userId, fetchWalletCards]);
 
-  // Open edit modal
-  const handleEditCard = useCallback((card) => {
-    setSelectedCard(card);
-    setEditFormData({
-      nickname: card.name === card.cardName ? '' : card.name,
-      last_four_digits: card.lastFour || '',
-      credit_limit: card.creditLimit ? String(card.creditLimit) : '',
-    });
-    setShowEditModal(true);
-  }, []);
-
-  // Update wallet card
-  const handleUpdateCard = useCallback(async () => {
-    if (!selectedCard) return;
-
-    setSubmitting(true);
-    try {
-      const payload = {};
-
-      if (editFormData.nickname?.trim()) {
-        payload.nickname = editFormData.nickname.trim();
-      }
-
-      if (editFormData.last_four_digits?.trim()) {
-        const digits = editFormData.last_four_digits.trim();
-        if (digits.length === 4 && /^\d+$/.test(digits)) {
-          payload.last_four_digits = digits;
-        } else {
-          Alert.alert('Error', 'Last 4 digits must be exactly 4 numbers');
-          setSubmitting(false);
-          return;
-        }
-      }
-
-      if (editFormData.credit_limit?.trim()) {
-        const limit = parseFloat(editFormData.credit_limit.trim());
-        if (!isNaN(limit) && limit >= 0) {
-          payload.credit_limit = limit;
-        }
-      }
-
-      await API.updateWalletCard(selectedCard.userCardId, payload);
-
-      setShowEditModal(false);
-      setSelectedCard(null);
-      await fetchWalletCards();
-
-      Alert.alert('Success', 'Card updated successfully!');
-    } catch (error) {
-      console.error('Error updating card:', error);
-      Alert.alert('Error', error.response?.data?.detail || 'Could not update card');
-    } finally {
-      setSubmitting(false);
-    }
-  }, [selectedCard, editFormData, fetchWalletCards]);
 
   // Delete wallet card
   const handleDeleteCard = useCallback((card) => {
@@ -296,23 +226,18 @@ export default function CardsScreen() {
   const WalletCardItem = ({ card }) => (
     <TouchableOpacity
       style={styles.cardItem}
-      onPress={() => handleEditCard(card)}
       onLongPress={() => handleDeleteCard(card)}
     >
       <View style={styles.cardIcon}>
         <Text style={styles.cardIconText}>💳</Text>
       </View>
       <View style={styles.cardDetails}>
-        <Text style={styles.cardName}>
-          {card.name}
-          {card.lastFour && <Text style={styles.lastFour}> •••• {card.lastFour}</Text>}
-        </Text>
+        <Text style={styles.cardName}>{card.name}</Text>
         <Text style={styles.cardIssuer}>{card.issuer}</Text>
         {card.creditLimit && (
           <Text style={styles.cardLimit}>Limit: ${card.creditLimit.toLocaleString()}</Text>
         )}
       </View>
-      <Text style={styles.editIcon}>✏️</Text>
     </TouchableOpacity>
   );
 
@@ -473,94 +398,11 @@ export default function CardsScreen() {
         </View>
       </Modal>
 
-      {/* Edit Card Modal */}
-      <Modal
-        visible={showEditModal}
-        animationType="slide"
-        transparent={true}
-        onRequestClose={() => setShowEditModal(false)}
-      >
-        <View style={styles.modalOverlay}>
-          <View style={styles.modalContent}>
-            <ScrollView showsVerticalScrollIndicator={false}>
-              <View style={styles.modalHeader}>
-                <Text style={styles.modalTitle}>Edit Card</Text>
-                <TouchableOpacity
-                  onPress={() => setShowEditModal(false)}
-                  style={styles.closeButton}
-                  disabled={submitting}
-                >
-                  <Text style={styles.closeButtonText}>✕</Text>
-                </TouchableOpacity>
-              </View>
-
-              {selectedCard && (
-                <View style={styles.cardInfoBox}>
-                  <Text style={styles.cardInfoTitle}>{selectedCard.cardName}</Text>
-                  <Text style={styles.cardInfoSubtitle}>{selectedCard.issuer}</Text>
-                </View>
-              )}
-
-              <View style={styles.inputGroup}>
-                <Text style={styles.label}>Nickname (Optional)</Text>
-                <TextInput
-                  style={styles.input}
-                  placeholder="e.g. My Travel Card"
-                  value={editFormData.nickname}
-                  onChangeText={(text) => setEditFormData({ ...editFormData, nickname: text })}
-                  autoCapitalize="words"
-                />
-              </View>
-
-              <View style={styles.inputGroup}>
-                <Text style={styles.label}>Last 4 Digits (Optional)</Text>
-                <TextInput
-                  style={styles.input}
-                  placeholder="1234"
-                  value={editFormData.last_four_digits}
-                  onChangeText={(text) => setEditFormData({ ...editFormData, last_four_digits: text })}
-                  keyboardType="number-pad"
-                  maxLength={4}
-                />
-              </View>
-
-              <View style={styles.inputGroup}>
-                <Text style={styles.label}>Credit Limit (Optional)</Text>
-                <TextInput
-                  style={styles.input}
-                  placeholder="15000"
-                  value={editFormData.credit_limit}
-                  onChangeText={(text) => setEditFormData({ ...editFormData, credit_limit: text })}
-                  keyboardType="decimal-pad"
-                />
-              </View>
-
-              <TouchableOpacity
-                style={[styles.submitButton, submitting && { opacity: 0.6 }]}
-                onPress={handleUpdateCard}
-                disabled={submitting}
-              >
-                <Text style={styles.submitButtonText}>
-                  {submitting ? 'Updating...' : 'Update Card'}
-                </Text>
-              </TouchableOpacity>
-
-              <TouchableOpacity
-                style={styles.cancelButton}
-                onPress={() => setShowEditModal(false)}
-                disabled={submitting}
-              >
-                <Text style={styles.cancelButtonText}>Cancel</Text>
-              </TouchableOpacity>
-            </ScrollView>
-          </View>
-        </View>
-      </Modal>
 
       {!loading && walletCards.length > 0 && (
         <View style={styles.helpBox}>
           <Text style={styles.helpText}>
-            💡 Tap to edit • Long press to remove
+            💡 Long press to remove card
           </Text>
         </View>
       )}
@@ -610,7 +452,6 @@ const styles = StyleSheet.create({
   lastFour: { fontSize: 14, fontWeight: 'normal', color: '#666' },
   cardIssuer: { fontSize: 13, color: '#666', marginBottom: 4 },
   cardLimit: { fontSize: 12, color: '#4A90E2', fontWeight: '500' },
-  editIcon: { fontSize: 20, marginLeft: 8 },
 
   // Library card
   libraryCardItem: {
@@ -741,58 +582,6 @@ const styles = StyleSheet.create({
     paddingBottom: 20,
   },
 
-  // Edit form
-  cardInfoBox: {
-    backgroundColor: '#E3F2FD',
-    padding: 16,
-    borderRadius: 12,
-    marginBottom: 20,
-  },
-  cardInfoTitle: {
-    fontSize: 18,
-    fontWeight: 'bold',
-    color: '#333',
-    marginBottom: 4,
-  },
-  cardInfoSubtitle: {
-    fontSize: 14,
-    color: '#666',
-  },
-  inputGroup: { marginBottom: 20 },
-  label: { fontSize: 16, fontWeight: '600', color: '#333', marginBottom: 8 },
-  input: {
-    backgroundColor: '#F5F7FA',
-    borderWidth: 1,
-    borderColor: '#E0E0E0',
-    borderRadius: 8,
-    padding: 12,
-    fontSize: 16,
-  },
-  submitButton: {
-    backgroundColor: '#4A90E2',
-    borderRadius: 8,
-    padding: 16,
-    alignItems: 'center',
-    marginBottom: 12,
-  },
-  submitButtonText: {
-    color: '#fff',
-    fontSize: 18,
-    fontWeight: '600',
-  },
-  cancelButton: {
-    backgroundColor: '#fff',
-    borderWidth: 1,
-    borderColor: '#E0E0E0',
-    borderRadius: 8,
-    padding: 16,
-    alignItems: 'center',
-  },
-  cancelButtonText: {
-    color: '#666',
-    fontSize: 16,
-    fontWeight: '600',
-  },
   helpBox: {
     padding: 16,
     backgroundColor: '#E3F2FD',
