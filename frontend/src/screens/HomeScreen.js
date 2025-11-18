@@ -1,236 +1,299 @@
+/**
+ * HomeScreen.js - FINAL VERSION
+ * With original white box container + grey merchant tiles design
+ */
+
 import React, { useState, useEffect } from 'react';
-import { View, Text, StyleSheet, ScrollView, ActivityIndicator, RefreshControl, TouchableOpacity, Alert } from 'react-native';
-import { SafeAreaView } from 'react-native-safe-area-context';
-import AsyncStorage from '@react-native-async-storage/async-storage';
-import { API } from '../services/api';
-import LocationService from '../services/locationService';
-import NearbyPlacesCard from '../components/NearbyPlacesCard';
+import {
+  View,
+  Text,
+  TouchableOpacity,
+  ScrollView,
+  StyleSheet,
+  RefreshControl,
+} from 'react-native';
+import TransactionModal from '../components/TransactionModal';
 
-export default function HomeScreen() {
-  const [stats, setStats] = useState({
-    total_rewards: 0,
-    total_transactions: 0,
-    total_spent: 0,
-    optimization_rate: 0
-  });
-  const [loading, setLoading] = useState(true);
+const HomeScreen = ({ navigation, route }) => {
+  // Get userId and userName from navigation params or use defaults
+  const userId = route?.params?.userId || 'user_123';
+  const userName = route?.params?.userName || 'Joe';
+  
+  const [userCards, setUserCards] = useState([]);
+  const [totalRewards, setTotalRewards] = useState(0);
+  const [transactionCount, setTransactionCount] = useState(0);
+  const [nearbyMerchants, setNearbyMerchants] = useState([]);
   const [refreshing, setRefreshing] = useState(false);
-  const [userName, setUserName] = useState('');
-  const [locationPermission, setLocationPermission] = useState(null);
-  const [nearbyRecommendations, setNearbyRecommendations] = useState([]);
-  const [loadingLocation, setLoadingLocation] = useState(false);
-  const [locationError, setLocationError] = useState(null);
+  
+  // Modal state
+  const [modalVisible, setModalVisible] = useState(false);
+  const [selectedMerchant, setSelectedMerchant] = useState(null);
 
+  // API Configuration
+  const API_URL = 'http://localhost:8000'; // Change this to your actual API URL
+  // For mobile testing, use your computer's IP: 'http://192.168.1.XXX:8000'
+
+  // Fetch user data from backend
   const fetchUserData = async () => {
     try {
-      const userId = await AsyncStorage.getItem('userId');
-      const fullName = await AsyncStorage.getItem('userFullName');
-
-      if (fullName) {
-        setUserName(fullName.split(' ')[0]); // Get first name
+      // Fetch user's actual cards from backend
+      try {
+        const cardsResponse = await fetch(`${API_URL}/api/v1/users/${userId}/cards`);
+        if (cardsResponse.ok) {
+          const cards = await cardsResponse.json();
+          setUserCards(cards);
+          console.log('Loaded user cards:', cards.length);
+        } else {
+          console.log('Could not fetch cards, using mock data');
+          setUserCards([]);
+        }
+      } catch (error) {
+        console.error('Error fetching cards:', error);
+        setUserCards([]);
       }
 
-      if (userId) {
-        const response = await API.getUserStats(userId);
-        setStats(response.data);
+      // Fetch user stats
+      try {
+        const statsResponse = await fetch(`${API_URL}/api/v1/users/${userId}/stats`);
+        if (statsResponse.ok) {
+          const stats = await statsResponse.json();
+          setTotalRewards(stats.total_rewards || 0);
+          setTransactionCount(stats.total_transactions || 0);
+        }
+      } catch (error) {
+        console.error('Error fetching stats:', error);
+      }
+
+      // Fetch nearby merchants (or use mock data)
+      try {
+        const merchantsResponse = await fetch(
+          `${API_URL}/api/v1/merchants/nearby?user_id=${userId}`
+        );
+        if (merchantsResponse.ok) {
+          const data = await merchantsResponse.json();
+          setNearbyMerchants(data.merchants || getMockMerchants());
+        } else {
+          setNearbyMerchants(getMockMerchants());
+        }
+      } catch (error) {
+        console.log('Using mock merchants');
+        setNearbyMerchants(getMockMerchants());
       }
     } catch (error) {
       console.error('Error fetching user data:', error);
-      // Keep default values on error
-    } finally {
-      setLoading(false);
+      setNearbyMerchants(getMockMerchants());
     }
   };
 
-  const requestLocationPermissionAndFetchRecommendations = async () => {
-    try {
-      setLoadingLocation(true);
-      setLocationError(null);
+  // Mock merchants data (all original merchants)
+  const getMockMerchants = () => [
+    {
+      name: 'Starbucks',
+      category: 'DINING',
+      address: '555 Coffee Lane',
+      distance: '600m',
+      rating: 4.3,
+      best_card: 'American Express Gold',
+      estimated_rewards: '$5.50 in rewards',
+    },
+    {
+      name: 'Whole Foods Market',
+      category: 'GROCERIES',
+      address: '456 Market Street',
+      distance: '750m',
+      rating: 4.5,
+      best_card: 'Amazon Prime Rewards',
+      estimated_rewards: '$5.00 in rewards',
+    },
+    {
+      name: 'Chipotle Mexican Grill',
+      category: 'DINING',
+      address: '789 Restaurant Row',
+      distance: '900m',
+      rating: 4.0,
+      best_card: 'Chase Sapphire Reserve',
+      estimated_rewards: '$4.50 in rewards',
+    },
+    {
+      name: 'Target',
+      category: 'SHOPPING',
+      address: '123 Main Street',
+      distance: '1.1km',
+      rating: 4.2,
+      best_card: 'Target RedCard',
+      estimated_rewards: '$4.00 in rewards',
+    },
+    {
+      name: 'Panera Bread',
+      category: 'DINING',
+      address: '222 Bakery Ave',
+      distance: '800m',
+      rating: 4.1,
+      best_card: 'American Express Gold',
+      estimated_rewards: '$3.80 in rewards',
+    },
+    {
+      name: 'Shell Gas Station',
+      category: 'GAS',
+      address: '321 Highway Blvd',
+      distance: '1.2km',
+      rating: 3.9,
+      best_card: 'Chase Freedom',
+      estimated_rewards: '$3.50 in rewards',
+    },
+  ];
 
-      const userId = await AsyncStorage.getItem('userId');
-      if (!userId) {
-        console.log('No user ID found, skipping location request');
-        return;
-      }
-
-      // Check if permission already granted
-      const permissionStatus = await LocationService.getPermissionStatus();
-
-      if (!permissionStatus.granted) {
-        // Check if we've asked before
-        const hasAsked = await LocationService.hasRequestedPermission();
-
-        if (!hasAsked) {
-          // First time - request permission
-          const result = await LocationService.requestPermission();
-          setLocationPermission(result.status);
-
-          if (!result.granted) {
-            setLocationError('Location permission denied. Enable in settings to see nearby recommendations.');
-            return;
-          }
-        } else {
-          // Already asked before and denied
-          setLocationError('Location permission required. Please enable in settings.');
-          return;
-        }
-      } else {
-        setLocationPermission('granted');
-      }
-
-      // Get current location
-      const location = await LocationService.getCurrentLocation();
-
-      if (!location) {
-        setLocationError('Unable to get your location');
-        return;
-      }
-
-      console.log('Current location:', location);
-
-      // Fetch nearby recommendations
-      const response = await API.getLocationBasedRecommendations(
-        userId,
-        location.latitude,
-        location.longitude,
-        2000 // 2km radius
-      );
-
-      setNearbyRecommendations(response.data.top_recommendations || []);
-
-    } catch (error) {
-      console.error('Error with location recommendations:', error);
-      setLocationError('Failed to load nearby recommendations');
-    } finally {
-      setLoadingLocation(false);
-    }
-  };
+  useEffect(() => {
+    fetchUserData();
+  }, []);
 
   const onRefresh = async () => {
     setRefreshing(true);
     await fetchUserData();
-    await requestLocationPermissionAndFetchRecommendations();
     setRefreshing(false);
   };
 
-  useEffect(() => {
+  const handleMerchantPress = (merchant) => {
+    setSelectedMerchant(merchant);
+    setModalVisible(true);
+  };
+
+  const handleTransactionSuccess = () => {
     fetchUserData();
-    // Request location permission and fetch recommendations on mount
-    requestLocationPermissionAndFetchRecommendations();
-  }, []);
+  };
 
   return (
-    <SafeAreaView style={styles.container}>
+    <View style={styles.container}>
+      {/* Blue Header Bar */}
+      <View style={styles.headerBar} />
+
       <ScrollView
+        style={styles.scrollView}
+        showsVerticalScrollIndicator={false}
         refreshControl={
           <RefreshControl refreshing={refreshing} onRefresh={onRefresh} />
         }
       >
-        <View style={styles.header}>
-          <Text style={styles.title}>💳 Agentic Wallet</Text>
-          <Text style={styles.subtitle}>AI-Powered Card Optimizer</Text>
-        </View>
-
-        <View style={styles.card}>
-          <Text style={styles.cardTitle}>Welcome{userName ? ` ${userName}` : ''}! 👋</Text>
-          <Text style={styles.cardText}>
+        {/* Welcome Card */}
+        <View style={styles.welcomeCard}>
+          <Text style={styles.welcomeTitle}>Welcome {userName}! 👋</Text>
+          <Text style={styles.welcomeSubtitle}>
             Your intelligent credit card recommendation system is ready.
           </Text>
-          <Text style={styles.cardText}>
+          <Text style={styles.welcomeDescription}>
             Tap the Transaction tab below to get AI-powered recommendations!
           </Text>
         </View>
 
-        {loading ? (
-          <View style={styles.loadingContainer}>
-            <ActivityIndicator size="large" color="#4A90E2" />
-            <Text style={styles.loadingText}>Loading your stats...</Text>
+        {/* Stats Cards */}
+        <View style={styles.statsContainer}>
+          <View style={styles.statCard}>
+            <Text style={styles.statValue}>${totalRewards.toFixed(2)}</Text>
+            <Text style={styles.statLabel}>Total Rewards</Text>
           </View>
-        ) : (
-          <View style={styles.statsContainer}>
-            <View style={styles.statBox}>
-              <Text style={styles.statNumber}>${stats.total_rewards.toFixed(2)}</Text>
-              <Text style={styles.statLabel}>Total Rewards</Text>
-            </View>
-            <View style={styles.statBox}>
-              <Text style={styles.statNumber}>{stats.total_transactions}</Text>
-              <Text style={styles.statLabel}>Transactions</Text>
-            </View>
+          <View style={styles.statCard}>
+            <Text style={styles.statValue}>{transactionCount}</Text>
+            <Text style={styles.statLabel}>Transactions</Text>
           </View>
-        )}
+        </View>
 
-        {!loading && stats.total_transactions > 0 && (
-          <View style={styles.insightCard}>
-            <Text style={styles.insightTitle}>📊 Your Performance</Text>
-            <Text style={styles.insightText}>
-              Total Spent: ${stats.total_spent.toFixed(2)}
-            </Text>
-            <Text style={styles.insightText}>
-              Optimization Rate: {(stats.optimization_rate * 100).toFixed(1)}%
-            </Text>
-            {stats.missed_value > 0 && (
-              <Text style={[styles.insightText, { color: '#FF9800' }]}>
-                Potential Savings: ${stats.missed_value.toFixed(2)}
-              </Text>
-            )}
-          </View>
-        )}
-
-        {/* Location-based recommendations */}
-        {loadingLocation && (
-          <View style={styles.locationLoadingCard}>
-            <ActivityIndicator size="small" color="#4A90E2" />
-            <Text style={styles.locationLoadingText}>Finding nearby places...</Text>
-          </View>
-        )}
-
-        {!loadingLocation && locationError && (
-          <View style={styles.locationErrorCard}>
-            <Text style={styles.locationErrorText}>📍 {locationError}</Text>
-            <TouchableOpacity
-              style={styles.retryButton}
-              onPress={requestLocationPermissionAndFetchRecommendations}
-            >
-              <Text style={styles.retryButtonText}>Try Again</Text>
+        {/* Nearby Recommendations - WHITE BOX WITH GREY TILES (Original Style) */}
+        <View style={styles.nearbyCard}>
+          <View style={styles.nearbyHeader}>
+            <Text style={styles.nearbyTitle}>Nearby Recommendations</Text>
+            <TouchableOpacity onPress={onRefresh}>
+              <Text style={styles.refreshButton}>Refresh</Text>
             </TouchableOpacity>
           </View>
-        )}
 
-        {!loadingLocation && !locationError && nearbyRecommendations.length > 0 && (
-          <NearbyPlacesCard
-            recommendations={nearbyRecommendations}
-            onRefresh={requestLocationPermissionAndFetchRecommendations}
-          />
-        )}
+          {/* Horizontal Scrolling Grey Merchant Tiles */}
+          <ScrollView
+            horizontal
+            showsHorizontalScrollIndicator={false}
+            style={styles.merchantsScroll}
+            contentContainerStyle={styles.merchantsScrollContent}
+          >
+            {nearbyMerchants.map((merchant, index) => (
+              <TouchableOpacity
+                key={index}
+                style={styles.merchantTile}
+                onPress={() => handleMerchantPress(merchant)}
+                activeOpacity={0.7}
+              >
+                {/* Merchant Name and Category */}
+                <View style={styles.tileHeader}>
+                  <Text style={styles.tileName} numberOfLines={2}>
+                    {merchant.name}
+                  </Text>
+                  <View style={styles.categoryBadge}>
+                    <Text style={styles.categoryText}>{merchant.category}</Text>
+                  </View>
+                </View>
+
+                {/* Address */}
+                <Text style={styles.tileAddress} numberOfLines={1}>
+                  {merchant.address}
+                </Text>
+
+                {/* Distance and Rating */}
+                <View style={styles.tileMeta}>
+                  <Text style={styles.tileDistance}>{merchant.distance}</Text>
+                  <View style={styles.ratingContainer}>
+                    <Text style={styles.ratingStar}>⭐</Text>
+                    <Text style={styles.ratingText}>{merchant.rating}</Text>
+                  </View>
+                </View>
+
+                {/* Best Card Section */}
+                <View style={styles.tileDivider} />
+                <View style={styles.tileCardSection}>
+                  <Text style={styles.tileCardLabel}>Best Card:</Text>
+                  <Text style={styles.tileCardName} numberOfLines={1}>
+                    {merchant.best_card}
+                  </Text>
+                  <Text style={styles.tileRewards}>
+                    {merchant.estimated_rewards}
+                  </Text>
+                </View>
+              </TouchableOpacity>
+            ))}
+          </ScrollView>
+        </View>
+
+        {/* Bottom spacing */}
+        <View style={styles.bottomSpacer} />
       </ScrollView>
-    </SafeAreaView>
+
+      {/* Transaction Modal */}
+      <TransactionModal
+        visible={modalVisible}
+        onClose={() => setModalVisible(false)}
+        merchant={selectedMerchant}
+        userCards={userCards}
+        userId={userId}
+        onSuccess={handleTransactionSuccess}
+      />
+    </View>
   );
-}
+};
 
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: '#F5F7FA',
+    backgroundColor: '#f5f5f5',
   },
-  header: {
+  headerBar: {
+    height: 60,
     backgroundColor: '#4A90E2',
-    padding: 30,
-    alignItems: 'center',
   },
-  title: {
-    fontSize: 28,
-    fontWeight: 'bold',
-    color: '#fff',
-    marginBottom: 8,
+  scrollView: {
+    flex: 1,
   },
-  subtitle: {
-    fontSize: 16,
-    color: '#fff',
-    opacity: 0.9,
-  },
-  card: {
+  welcomeCard: {
     backgroundColor: '#fff',
-    margin: 20,
+    marginHorizontal: 16,
+    marginTop: 16,
+    marginBottom: 16,
     padding: 20,
     borderRadius: 12,
     shadowColor: '#000',
@@ -239,24 +302,30 @@ const styles = StyleSheet.create({
     shadowRadius: 4,
     elevation: 3,
   },
-  cardTitle: {
-    fontSize: 22,
+  welcomeTitle: {
+    fontSize: 24,
     fontWeight: 'bold',
-    color: '#333',
-    marginBottom: 12,
+    color: '#1a1a1a',
+    marginBottom: 8,
   },
-  cardText: {
+  welcomeSubtitle: {
     fontSize: 16,
     color: '#666',
-    lineHeight: 24,
     marginBottom: 8,
+    lineHeight: 22,
+  },
+  welcomeDescription: {
+    fontSize: 14,
+    color: '#999',
+    lineHeight: 20,
   },
   statsContainer: {
     flexDirection: 'row',
-    paddingHorizontal: 20,
-    gap: 15,
+    paddingHorizontal: 16,
+    marginBottom: 20,
+    gap: 12,
   },
-  statBox: {
+  statCard: {
     flex: 1,
     backgroundColor: '#fff',
     padding: 20,
@@ -268,31 +337,22 @@ const styles = StyleSheet.create({
     shadowRadius: 4,
     elevation: 3,
   },
-  statNumber: {
-    fontSize: 28,
+  statValue: {
+    fontSize: 32,
     fontWeight: 'bold',
     color: '#4A90E2',
-    marginBottom: 8,
+    marginBottom: 4,
   },
   statLabel: {
     fontSize: 14,
     color: '#666',
   },
-  loadingContainer: {
-    flex: 1,
-    justifyContent: 'center',
-    alignItems: 'center',
-    padding: 40,
-  },
-  loadingText: {
-    marginTop: 12,
-    fontSize: 16,
-    color: '#666',
-  },
-  insightCard: {
+  // NEARBY CARD - WHITE BOX CONTAINER (Original Style)
+  nearbyCard: {
     backgroundColor: '#fff',
-    margin: 20,
-    padding: 20,
+    marginHorizontal: 16,
+    marginBottom: 20,
+    paddingVertical: 20,
     borderRadius: 12,
     shadowColor: '#000',
     shadowOffset: { width: 0, height: 2 },
@@ -300,68 +360,114 @@ const styles = StyleSheet.create({
     shadowRadius: 4,
     elevation: 3,
   },
-  insightTitle: {
-    fontSize: 18,
-    fontWeight: 'bold',
-    color: '#333',
-    marginBottom: 12,
-  },
-  insightText: {
-    fontSize: 15,
-    color: '#666',
-    marginBottom: 8,
-    lineHeight: 22,
-  },
-  locationLoadingCard: {
-    backgroundColor: '#fff',
-    margin: 20,
-    marginTop: 10,
-    padding: 20,
-    borderRadius: 12,
+  nearbyHeader: {
     flexDirection: 'row',
+    justifyContent: 'space-between',
     alignItems: 'center',
-    justifyContent: 'center',
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.1,
-    shadowRadius: 4,
-    elevation: 3,
-  },
-  locationLoadingText: {
-    marginLeft: 12,
-    fontSize: 15,
-    color: '#666',
-  },
-  locationErrorCard: {
-    backgroundColor: '#FFF3E0',
-    margin: 20,
-    marginTop: 10,
-    padding: 20,
-    borderRadius: 12,
-    borderWidth: 1,
-    borderColor: '#FFB74D',
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.1,
-    shadowRadius: 4,
-    elevation: 3,
-  },
-  locationErrorText: {
-    fontSize: 14,
-    color: '#E65100',
-    marginBottom: 12,
-    lineHeight: 20,
-  },
-  retryButton: {
-    backgroundColor: '#4A90E2',
-    paddingVertical: 10,
     paddingHorizontal: 20,
-    borderRadius: 8,
-    alignSelf: 'flex-start',
+    marginBottom: 16,
   },
-  retryButtonText: {
-    color: '#fff',
-    fontSize: 14,
+  nearbyTitle: {
+    fontSize: 20,
+    fontWeight: 'bold',
+    color: '#1a1a1a',
+  },
+  refreshButton: {
+    fontSize: 16,
+    color: '#4A90E2',
     fontWeight: '600',
   },
+  merchantsScroll: {
+    paddingLeft: 20,
+  },
+  merchantsScrollContent: {
+    paddingRight: 20,
+  },
+  // MERCHANT TILES - GREY BACKGROUND (Original Style)
+  merchantTile: {
+    width: 280,
+    backgroundColor: '#F5F5F5', // Grey background like original
+    borderRadius: 12,
+    padding: 16,
+    marginRight: 12,
+  },
+  tileHeader: {
+    marginBottom: 8,
+  },
+  tileName: {
+    fontSize: 18,
+    fontWeight: '600',
+    color: '#1a1a1a',
+    marginBottom: 6,
+  },
+  categoryBadge: {
+    backgroundColor: '#4A90E2',
+    paddingHorizontal: 10,
+    paddingVertical: 4,
+    borderRadius: 10,
+    alignSelf: 'flex-start',
+  },
+  categoryText: {
+    color: '#fff',
+    fontSize: 11,
+    fontWeight: '600',
+    textTransform: 'uppercase',
+  },
+  tileAddress: {
+    fontSize: 14,
+    color: '#666',
+    marginBottom: 8,
+  },
+  tileMeta: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginBottom: 12,
+  },
+  tileDistance: {
+    fontSize: 14,
+    color: '#666',
+    marginRight: 16,
+  },
+  ratingContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  ratingStar: {
+    fontSize: 14,
+    marginRight: 4,
+  },
+  ratingText: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: '#666',
+  },
+  tileDivider: {
+    height: 1,
+    backgroundColor: '#e0e0e0',
+    marginVertical: 12,
+  },
+  tileCardSection: {
+    paddingTop: 4,
+  },
+  tileCardLabel: {
+    fontSize: 12,
+    color: '#999',
+    marginBottom: 4,
+  },
+  tileCardName: {
+    fontSize: 15,
+    fontWeight: '600',
+    color: '#1a1a1a',
+    marginBottom: 4,
+  },
+  tileRewards: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: '#2ecc71',
+  },
+  bottomSpacer: {
+    height: 40,
+  },
 });
+
+export default HomeScreen;

@@ -176,6 +176,25 @@ class CreditCardUpdateRequest(BaseModel):
 class AddCardFromLibraryRequest(BaseModel):
     library_card_id: str
     last_four_digits: Optional[str] = Field(default=None, min_length=4, max_length=4)
+
+class TransactionRecordRequest(BaseModel):
+    user_id: str
+    merchant: str
+    amount: float
+    category: Optional[str] = None
+    card_id: str
+    location: Optional[str] = None
+
+class TransactionRecordResponse(BaseModel):
+    transaction_id: str
+    merchant: str
+    amount: float
+    card_used: str
+    rewards_earned: float
+    reward_type: str
+    total_rewards_balance: float
+    message: str
+    
 # ============================================================================
 # USER CREDIT CARD SCHEMAS (User's owned cards)
 # ============================================================================
@@ -1494,7 +1513,201 @@ async def get_location_based_recommendations(
         )
 
 
-
+@app.get("/api/v1/merchants/nearby")
+async def get_nearby_merchants(
+    user_id: str,
+    latitude: Optional[float] = 37.7749,
+    longitude: Optional[float] = -122.4194,
+    radius: int = 2000,
+    db: Session = Depends(get_db)
+):
+    """
+    Get nearby merchants using location service
+    
+    This endpoint:
+    - Uses location_service.py to get nearby places
+    - Returns mock data (Starbucks, Whole Foods, etc.)
+    - For each merchant, calculates best card recommendation
+    """
+    try:
+        # Verify user exists
+        user = get_user(db, user_id)
+        if not user:
+            raise HTTPException(status_code=404, detail="User not found")
+        
+        # Get nearby places from location service (mock data)
+        places = location_service.get_nearby_places(
+            latitude=latitude,
+            longitude=longitude,
+            radius=radius
+        )
+        
+        # Get user's cards for recommendations
+        user_cards = get_user_cards(db, user_id, active_only=True)
+        
+        # For each place, find best card
+        for place in places:
+            best_card = None
+            best_value = 0.0
+            
+            category = place['category']
+            
+            for card in user_cards:
+                value = 0.0
+                
+                # Check cash back rate
+                if card.cash_back_rate and category in card.cash_back_rate:
+                    value = card.cash_back_rate[category] * 100  # Convert to %
+                # Check points multiplier
+                elif card.points_multiplier and category in card.points_multiplier:
+                    value = card.points_multiplier[category]
+                
+                if value > best_value:
+                    best_value = value
+                    best_card = card.card_name
+            
+            # Add recommendation to place data
+            place['bestCard'] = best_card or 'No optimal card'
+            place['estimatedRewards'] = f'{best_value:.1f}% back' if best_card else 'N/A'
+            place['distance'] = location_service.format_distance(place['distance_meters'])
+        
+        return {
+            "merchants": places,
+            "count": len(places)
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error fetching nearby merchants: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+        
+@app.post("/api/v1/transactions/record", response_model=TransactionRecordResponse)
+async def record_transaction(
+    request: TransactionRecordRequest,
+    db: Session = Depends(get_db)
+):
+    """
+    Record a completed transaction and calculate rewards earned
+    
+    This endpoint:
+    1. Validates user and card exist
+    2. Creates transaction record
+    3. Calculates rewards based on card and category
+    4. Updates user's total rewards
+    5. Returns rewards earned
+    """
+    try:
+        # Validate user exists
+        user = get_user(db, request.user_id)
+        if not user:
+            raise HTTPException(status_code=404, detail="User not found")
+        
+        # Validate card exists and belongs to user
+        card = get_card(db, request.card_id)
+        if not card:
+            raise HTTPException(status_code=404, detail="Card not found")
+        
+        if card.user_id != request.user_id:
+            raise HTTPException(
+                status_code=403,
+                detail="Card does not belong to this user"
+            )
+        
+        if not card.is_active:
+            raise HTTPException(
+                status_code=400,
+                detail="Card is not active"
+            )
+        
+        # Get or create merchant
+        from models import CategoryEnum
+        category_enum = CategoryEnum.OTHER
+        if request.category:
+            try:
+                category_enum = CategoryEnum(request.category.lower())
+            except ValueError:
+                category_enum = CategoryEnum.OTHER
+        
+        merchant = get_or_create_merchant(
+            db,
+            merchant_name=request.merchant,
+            category=category_enum,
+            location=request.location
+        )
+        
+        # Calculate rewards based on card
+        rewards_earned = 0.0
+        reward_type = "cash_back"
+        
+        category_key = category_enum.value
+        
+        # Check cash back rates
+        if card.cash_back_rate and category_key in card.cash_back_rate:
+            cash_back_rate = card.cash_back_rate[category_key]
+            rewards_earned = request.amount * cash_back_rate
+            reward_type = "cash_back"
+        # Check points multiplier
+        elif card.points_multiplier and category_key in card.points_multiplier:
+            points_multiplier = card.points_multiplier[category_key]
+            rewards_earned = request.amount * points_multiplier
+            reward_type = "points"
+        # Default rewards (1%)
+        else:
+            if card.cash_back_rate and "default" in card.cash_back_rate:
+                rewards_earned = request.amount * card.cash_back_rate["default"]
+                reward_type = "cash_back"
+            elif card.points_multiplier and "default" in card.points_multiplier:
+                rewards_earned = request.amount * card.points_multiplier["default"]
+                reward_type = "points"
+            else:
+                # Fallback: 1% cash back
+                rewards_earned = request.amount * 0.01
+                reward_type = "cash_back"
+        
+        # Create transaction record
+        transaction = create_transaction(
+            db=db,
+            user_id=request.user_id,
+            card_id=request.card_id,
+            merchant_id=merchant.merchant_id,
+            amount=request.amount,
+            category=category_enum,
+            rewards_earned=rewards_earned,
+            transaction_date=request.timestamp or datetime.utcnow()
+        )
+        
+        # Get updated user stats
+        stats = calculate_transaction_stats(db, request.user_id)
+        total_rewards = stats.get("total_rewards", rewards_earned)
+        
+        # Log the transaction
+        logger.info(
+            f"Transaction recorded: user={request.user_id}, "
+            f"merchant={request.merchant}, amount=${request.amount:.2f}, "
+            f"rewards={rewards_earned:.2f} {reward_type}"
+        )
+        
+        return TransactionRecordResponse(
+            transaction_id=transaction.transaction_id,
+            merchant=request.merchant,
+            amount=request.amount,
+            card_used=card.card_name,
+            rewards_earned=rewards_earned,
+            reward_type=reward_type,
+            total_rewards_balance=total_rewards,
+            message=f"Transaction recorded! You earned {rewards_earned:.2f} {reward_type}!"
+        )
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error recording transaction: {e}", exc_info=True)
+        raise HTTPException(
+            status_code=500,
+            detail=f"Error recording transaction: {str(e)}"
+        )
+        
 # ============================================================================
 # DATABASE MANAGEMENT ENDPOINTS (Development/Admin only)
 # ============================================================================

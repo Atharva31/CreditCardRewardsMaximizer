@@ -18,7 +18,7 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import { API } from '../services/api';
 import axios from 'axios';
 
-const API_BASE_URL = 'http://10.0.0.222:8000';
+const API_BASE_URL = 'http://localhost:8000';
 
 export default function CardsScreen() {
   const [userId, setUserId] = useState(null);
