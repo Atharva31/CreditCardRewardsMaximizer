@@ -127,10 +127,47 @@ class CreditCard(Base):
     )
 
 
+class UserCreditCard(Base):
+    """Junction table linking users to their owned credit cards from the library"""
+    __tablename__ = "user_credit_cards"
+
+    user_card_id = Column(Integer, primary_key=True, autoincrement=True)
+    user_id = Column(String(50), ForeignKey('users.user_id', ondelete='CASCADE'), nullable=False)
+    card_id = Column(String(50), ForeignKey('credit_cards.card_id', ondelete='CASCADE'), nullable=False)
+
+    # User-specific card details
+    nickname = Column(String(255))  # User's custom name for the card
+    last_four_digits = Column(String(4))  # Last 4 digits of user's actual card
+    credit_limit = Column(Float)
+    current_balance = Column(Float, default=0.0)
+
+    # Status
+    is_active = Column(Boolean, default=True)
+    activation_date = Column(DateTime, default=datetime.utcnow)
+
+    # Metadata
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    # Relationships
+    user = relationship("User", backref="user_cards")
+    credit_card = relationship("CreditCard", backref="user_associations")
+
+    # Indexes
+    __table_args__ = (
+        Index('idx_user_card_user_id', 'user_id'),
+        Index('idx_user_card_card_id', 'card_id'),
+        Index('idx_user_card_is_active', 'is_active'),
+        # Ensure a user can't add the same card twice
+        Index('idx_user_card_unique', 'user_id', 'card_id', unique=True),
+        CheckConstraint('credit_limit >= 0', name='check_user_card_credit_limit_positive'),
+    )
+
+
 class CardBenefit(Base):
     """Specific benefits and offers for credit cards"""
     __tablename__ = "card_benefits"
-    
+
     benefit_id = Column(Integer, primary_key=True, autoincrement=True)
     card_id = Column(String(50), ForeignKey('credit_cards.card_id', ondelete='CASCADE'), nullable=False)
     

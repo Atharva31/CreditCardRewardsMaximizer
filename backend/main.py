@@ -29,7 +29,11 @@ from crud import (
     calculate_transaction_stats, create_transaction_feedback,
     get_user_behavior, update_user_behavior, create_automation_rule,
     get_user_automation_rules, get_or_create_merchant, create_credit_card, update_card, deactivate_card, get_card,
-    get_user_analytics
+    get_user_analytics,
+    # New UserCreditCard CRUD operations
+    add_user_credit_card, get_user_credit_cards, get_user_credit_card,
+    update_user_credit_card, delete_user_credit_card, deactivate_user_credit_card,
+    get_user_cards_with_details
 )
 from models import (
     User as UserModel, CreditCard as CreditCardModel,
@@ -46,6 +50,9 @@ from agentic_enhancements import (
 
 # Import auth utilities
 from auth import hash_password, verify_password, generate_user_id
+
+# Import location service
+from location_service import location_service
 
 app = FastAPI(
     title="Agentic Wallet API",
@@ -165,7 +172,51 @@ class CreditCardUpdateRequest(BaseModel):
     annual_fee: Optional[float] = Field(None, ge=0)
     benefits: Optional[List[str]] = None
     credit_limit: Optional[float] = Field(None, ge=0)
+
+
+# ============================================================================
+# USER CREDIT CARD SCHEMAS (User's owned cards)
+# ============================================================================
+
+class UserCreditCardCreate(BaseModel):
+    """Schema for adding a card from library to user's wallet"""
+    card_id: str = Field(..., description="Card ID from the card library")
+    nickname: Optional[str] = Field(None, max_length=255, description="Custom nickname for the card")
+    last_four_digits: Optional[str] = Field(None, max_length=4, min_length=4, description="Last 4 digits of actual card")
+    credit_limit: Optional[float] = Field(None, ge=0, description="User's credit limit")
+
+
+class UserCreditCardUpdate(BaseModel):
+    """Schema for updating user's credit card details"""
+    nickname: Optional[str] = Field(None, max_length=255)
+    last_four_digits: Optional[str] = Field(None, max_length=4, min_length=4)
+    credit_limit: Optional[float] = Field(None, ge=0)
+    current_balance: Optional[float] = Field(None, ge=0)
     is_active: Optional[bool] = None
+
+
+class UserCreditCardResponse(BaseModel):
+    """Schema for user credit card response with full details"""
+    # User-specific fields
+    user_card_id: int
+    nickname: Optional[str]
+    last_four_digits: Optional[str]
+    credit_limit: Optional[float]
+    current_balance: float
+    is_active: bool
+    activation_date: datetime
+
+    # Card library fields
+    card_id: str
+    card_name: str
+    issuer: str
+    annual_fee: float
+    cash_back_rate: Dict[str, float]
+    points_multiplier: Dict[str, float]
+    benefits: List[str]
+
+    class Config:
+        from_attributes = True
 
 
 class SignupRequest(BaseModel):
@@ -188,8 +239,55 @@ class AuthResponse(BaseModel):
     email: str
     full_name: str
     message: str
-    
-    
+
+
+class LocationRequest(BaseModel):
+    """Schema for location-based requests"""
+    latitude: float = Field(..., ge=-90, le=90, description="Latitude coordinate")
+    longitude: float = Field(..., ge=-180, le=180, description="Longitude coordinate")
+    radius: Optional[int] = Field(default=2000, ge=100, le=5000, description="Search radius in meters")
+
+
+class NearbyPlace(BaseModel):
+    """Schema for a nearby place"""
+    place_id: str
+    name: str
+    category: str
+    place_types: List[str]
+    address: str
+    latitude: float
+    longitude: float
+    rating: Optional[float]
+    price_level: Optional[int]
+    is_open: Optional[bool]
+    distance_meters: float
+    distance_formatted: str
+
+
+class LocationBasedRecommendationRequest(BaseModel):
+    """Schema for location-based card recommendation"""
+    user_id: str
+    latitude: float = Field(..., ge=-90, le=90)
+    longitude: float = Field(..., ge=-180, le=180)
+    radius: Optional[int] = Field(default=2000, ge=100, le=5000)
+
+
+class PlaceRecommendation(BaseModel):
+    """Schema for a place with card recommendation"""
+    place: NearbyPlace
+    recommended_card: RecommendedCardSimple
+    expected_reward: float
+    reward_explanation: str
+
+
+class LocationBasedRecommendationResponse(BaseModel):
+    """Schema for location-based recommendation response"""
+    user_location: Dict[str, float]
+    places_analyzed: int
+    top_recommendations: List[PlaceRecommendation]
+    timestamp: datetime
+
+
 # ============================================================================
 # STARTUP EVENT - Initialize Database
 # ============================================================================
@@ -912,21 +1010,488 @@ async def delete_credit_card(
     """Delete (deactivate) a credit card"""
     try:
         success = deactivate_card(db, card_id)
-        
+
         if not success:
             raise HTTPException(status_code=404, detail="Card not found")
-        
+
         return {
             "status": "success",
             "message": f"Card {card_id} has been deactivated",
             "card_id": card_id
         }
-        
+
     except HTTPException:
         raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error deleting card: {str(e)}")
-        
+
+
+# ============================================================================
+# USER CREDIT CARD ENDPOINTS (User's owned cards from library)
+# ============================================================================
+
+@app.get("/api/v1/users/{user_id}/wallet/cards", response_model=List[UserCreditCardResponse])
+async def get_user_wallet_cards(
+    user_id: str,
+    active_only: bool = True,
+    db: Session = Depends(get_db)
+):
+    """
+    Get all credit cards in user's wallet with full details.
+    This combines user-specific data (nickname, last 4 digits) with card library data.
+    """
+    try:
+        user = get_user(db, user_id)
+        if not user:
+            raise HTTPException(status_code=404, detail="User not found")
+
+        cards_with_details = get_user_cards_with_details(db, user_id, active_only)
+        return cards_with_details
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/api/v1/users/{user_id}/wallet/cards", response_model=UserCreditCardResponse, status_code=201)
+async def add_card_to_wallet(
+    user_id: str,
+    card_request: UserCreditCardCreate,
+    db: Session = Depends(get_db)
+):
+    """
+    Add a credit card from the library to user's wallet.
+    This creates a user-card association with optional custom details.
+    """
+    try:
+        user = get_user(db, user_id)
+        if not user:
+            raise HTTPException(status_code=404, detail="User not found")
+
+        # Add the card to user's wallet
+        user_card = add_user_credit_card(
+            db,
+            user_id=user_id,
+            card_id=card_request.card_id,
+            nickname=card_request.nickname,
+            last_four_digits=card_request.last_four_digits,
+            credit_limit=card_request.credit_limit
+        )
+
+        if not user_card:
+            raise HTTPException(
+                status_code=400,
+                detail="Card already exists in wallet or card not found in library"
+            )
+
+        # Return full details
+        card = user_card.credit_card
+        return UserCreditCardResponse(
+            user_card_id=user_card.user_card_id,
+            nickname=user_card.nickname,
+            last_four_digits=user_card.last_four_digits,
+            credit_limit=user_card.credit_limit,
+            current_balance=user_card.current_balance,
+            is_active=user_card.is_active,
+            activation_date=user_card.activation_date,
+            card_id=card.card_id,
+            card_name=card.card_name,
+            issuer=card.issuer.value,
+            annual_fee=card.annual_fee,
+            cash_back_rate=card.cash_back_rate,
+            points_multiplier=card.points_multiplier,
+            benefits=card.benefits or []
+        )
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error adding card to wallet: {str(e)}")
+
+
+@app.put("/api/v1/wallet/cards/{user_card_id}", response_model=UserCreditCardResponse)
+async def update_wallet_card(
+    user_card_id: int,
+    card_update: UserCreditCardUpdate,
+    db: Session = Depends(get_db)
+):
+    """
+    Update user-specific details of a credit card in their wallet.
+    Can update nickname, last 4 digits, credit limit, balance, or active status.
+    """
+    try:
+        update_data = card_update.dict(exclude_unset=True)
+        updated_user_card = update_user_credit_card(db, user_card_id, **update_data)
+
+        if not updated_user_card:
+            raise HTTPException(status_code=404, detail="User card not found")
+
+        # Return full details
+        card = updated_user_card.credit_card
+        return UserCreditCardResponse(
+            user_card_id=updated_user_card.user_card_id,
+            nickname=updated_user_card.nickname,
+            last_four_digits=updated_user_card.last_four_digits,
+            credit_limit=updated_user_card.credit_limit,
+            current_balance=updated_user_card.current_balance,
+            is_active=updated_user_card.is_active,
+            activation_date=updated_user_card.activation_date,
+            card_id=card.card_id,
+            card_name=card.card_name,
+            issuer=card.issuer.value,
+            annual_fee=card.annual_fee,
+            cash_back_rate=card.cash_back_rate,
+            points_multiplier=card.points_multiplier,
+            benefits=card.benefits or []
+        )
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error updating wallet card: {str(e)}")
+
+
+@app.delete("/api/v1/wallet/cards/{user_card_id}", status_code=200)
+async def remove_card_from_wallet(
+    user_card_id: int,
+    permanent: bool = False,
+    db: Session = Depends(get_db)
+):
+    """
+    Remove a credit card from user's wallet.
+    If permanent=False (default), the card is deactivated (soft delete).
+    If permanent=True, the card is completely removed from the wallet.
+    """
+    try:
+        if permanent:
+            success = delete_user_credit_card(db, user_card_id)
+            message = f"Card {user_card_id} permanently removed from wallet"
+        else:
+            success = deactivate_user_credit_card(db, user_card_id)
+            message = f"Card {user_card_id} deactivated in wallet"
+
+        if not success:
+            raise HTTPException(status_code=404, detail="User card not found")
+
+        return {
+            "status": "success",
+            "message": message,
+            "user_card_id": user_card_id,
+            "permanent": permanent
+        }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error removing card from wallet: {str(e)}")
+
+
+@app.get("/api/v1/wallet/cards/{user_card_id}", response_model=UserCreditCardResponse)
+async def get_wallet_card_details(
+    user_card_id: int,
+    db: Session = Depends(get_db)
+):
+    """Get detailed information about a specific card in user's wallet"""
+    try:
+        user_card = get_user_credit_card(db, user_card_id)
+        if not user_card:
+            raise HTTPException(status_code=404, detail="User card not found")
+
+        card = user_card.credit_card
+        return UserCreditCardResponse(
+            user_card_id=user_card.user_card_id,
+            nickname=user_card.nickname,
+            last_four_digits=user_card.last_four_digits,
+            credit_limit=user_card.credit_limit,
+            current_balance=user_card.current_balance,
+            is_active=user_card.is_active,
+            activation_date=user_card.activation_date,
+            card_id=card.card_id,
+            card_name=card.card_name,
+            issuer=card.issuer.value,
+            annual_fee=card.annual_fee,
+            cash_back_rate=card.cash_back_rate,
+            points_multiplier=card.points_multiplier,
+            benefits=card.benefits or []
+        )
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# ============================================================================
+# CARD LIBRARY ENDPOINTS (Browse available cards)
+# ============================================================================
+
+@app.get("/api/v1/cards/library", response_model=List[CreditCard])
+async def get_card_library(
+    issuer: Optional[str] = None,
+    min_fee: Optional[float] = None,
+    max_fee: Optional[float] = None,
+    limit: int = 100,
+    db: Session = Depends(get_db)
+):
+    """
+    Get available credit cards from the library.
+    Users can browse and add these cards to their wallet.
+    """
+    try:
+        from sqlalchemy import and_
+
+        query = db.query(CreditCardModel)
+
+        # Apply filters
+        filters = []
+        if issuer:
+            from models import CardIssuerEnum
+            try:
+                issuer_enum = CardIssuerEnum(issuer)
+                filters.append(CreditCardModel.issuer == issuer_enum)
+            except ValueError:
+                pass
+
+        if min_fee is not None:
+            filters.append(CreditCardModel.annual_fee >= min_fee)
+
+        if max_fee is not None:
+            filters.append(CreditCardModel.annual_fee <= max_fee)
+
+        if filters:
+            query = query.filter(and_(*filters))
+
+        cards = query.limit(limit).all()
+
+        return [
+            CreditCard(
+                card_id=card.card_id,
+                card_name=card.card_name,
+                issuer=card.issuer.value,
+                cash_back_rate=card.cash_back_rate,
+                points_multiplier=card.points_multiplier,
+                annual_fee=card.annual_fee,
+                benefits=card.benefits or [],
+                is_active=card.is_active
+            )
+            for card in cards
+        ]
+
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# ============================================================================
+# LOCATION-BASED RECOMMENDATION ENDPOINTS
+# ============================================================================
+
+@app.post("/api/v1/location/nearby-places", response_model=List[NearbyPlace])
+async def get_nearby_places(request: LocationRequest):
+    """
+    Get nearby places based on user's location
+
+    Returns list of nearby merchants and places sorted by distance
+    """
+    try:
+        logger.info(f"Fetching nearby places for location: ({request.latitude}, {request.longitude})")
+
+        places = location_service.get_nearby_places(
+            latitude=request.latitude,
+            longitude=request.longitude,
+            radius=request.radius
+        )
+
+        # Format response
+        formatted_places = []
+        for place in places:
+            formatted_places.append(NearbyPlace(
+                place_id=place['place_id'],
+                name=place['name'],
+                category=place['category'],
+                place_types=place['place_types'],
+                address=place['address'],
+                latitude=place['latitude'],
+                longitude=place['longitude'],
+                rating=place.get('rating'),
+                price_level=place.get('price_level'),
+                is_open=place.get('is_open'),
+                distance_meters=place['distance_meters'],
+                distance_formatted=location_service.format_distance(place['distance_meters'])
+            ))
+
+        logger.info(f"Found {len(formatted_places)} nearby places")
+        return formatted_places
+
+    except Exception as e:
+        logger.error(f"Error getting nearby places: {e}", exc_info=True)
+        raise HTTPException(
+            status_code=500,
+            detail=f"Error fetching nearby places: {str(e)}"
+        )
+
+
+@app.post("/api/v1/location/recommendations", response_model=LocationBasedRecommendationResponse)
+async def get_location_based_recommendations(
+    request: LocationBasedRecommendationRequest,
+    db: Session = Depends(get_db)
+):
+    """
+    Get credit card recommendations for nearby places
+
+    Analyzes nearby merchants and recommends the best card for each location
+    Returns top 5 places with card recommendations
+    """
+    try:
+        logger.info(f"Getting location-based recommendations for user {request.user_id}")
+
+        # Get user and their cards
+        user = get_user(db, request.user_id)
+        if not user:
+            raise HTTPException(status_code=404, detail="User not found")
+
+        # Get user's credit cards with full library details (including benefits)
+        user_cards_with_details = get_user_cards_with_details(db, request.user_id, active_only=True)
+        if not user_cards_with_details:
+            raise HTTPException(
+                status_code=400,
+                detail="User has no credit cards. Please add cards first."
+            )
+
+        # Convert to dictionaries for AI agent - includes all benefits and card details
+        user_cards_dict = [
+            {
+                "card_id": card["card_id"],
+                "card_name": card["card_name"],
+                "issuer": card["issuer"],
+                "cash_back_rate": card["cash_back_rate"],
+                "points_multiplier": card["points_multiplier"],
+                "annual_fee": card["annual_fee"],
+                "benefits": card["benefits"] or []
+            }
+            for card in user_cards_with_details
+        ]
+
+        # Get nearby places
+        nearby_places = location_service.get_nearby_places(
+            latitude=request.latitude,
+            longitude=request.longitude,
+            radius=request.radius
+        )
+
+        if not nearby_places:
+            return LocationBasedRecommendationResponse(
+                user_location={'latitude': request.latitude, 'longitude': request.longitude},
+                places_analyzed=0,
+                top_recommendations=[],
+                timestamp=datetime.utcnow()
+            )
+
+        # Get recommendations for each place
+        place_recommendations = []
+
+        for place in nearby_places[:10]:  # Analyze top 10 closest places
+            try:
+                # Prepare transaction data for the agentic system
+                # Get user's optimization goal (default to balanced if not set)
+                opt_goal = user.default_optimization_goal
+                if opt_goal and hasattr(opt_goal, 'value'):
+                    opt_goal_value = opt_goal.value
+                else:
+                    opt_goal_value = 'balanced'
+
+                transaction_data = {
+                    'merchant': place['name'],
+                    'amount': 50.0,  # Use average transaction amount
+                    'category': place['category'],
+                    'optimization_goal': opt_goal_value,
+                    'location': place['address']
+                }
+
+                # Use the agentic system to recommend best card for this place
+                recommendation = agentic_system.get_recommendation(
+                    transaction_data=transaction_data,
+                    user_cards=user_cards_dict
+                )
+
+                # Skip if there was an error
+                if 'error' in recommendation:
+                    logger.warning(f"Recommendation error for {place['name']}: {recommendation.get('message')}")
+                    continue
+
+                # Calculate reward for this place (expected_value is inside recommended_card)
+                rec_card = recommendation.get('recommended_card', {})
+                expected_reward = rec_card.get('expected_value', 0)
+
+                # Skip if no valid reward
+                if expected_reward <= 0:
+                    continue
+
+                place_recommendations.append({
+                    'place': place,
+                    'recommendation': recommendation,
+                    'expected_reward': expected_reward,
+                    'score': expected_reward / (place['distance_meters'] / 100)  # Score: reward per 100m
+                })
+
+            except Exception as e:
+                logger.warning(f"Error getting recommendation for {place['name']}: {e}")
+                continue
+
+        # Sort by score (best reward/distance ratio) and take top 5
+        place_recommendations.sort(key=lambda x: x['score'], reverse=True)
+        top_5 = place_recommendations[:5]
+
+        # Format response
+        formatted_recommendations = []
+        for item in top_5:
+            place = item['place']
+            rec = item['recommendation']
+            rec_card = rec.get('recommended_card', {})
+
+            formatted_recommendations.append(PlaceRecommendation(
+                place=NearbyPlace(
+                    place_id=place['place_id'],
+                    name=place['name'],
+                    category=place['category'],
+                    place_types=place['place_types'],
+                    address=place['address'],
+                    latitude=place['latitude'],
+                    longitude=place['longitude'],
+                    rating=place.get('rating'),
+                    price_level=place.get('price_level'),
+                    is_open=place.get('is_open'),
+                    distance_meters=place['distance_meters'],
+                    distance_formatted=location_service.format_distance(place['distance_meters'])
+                ),
+                recommended_card=RecommendedCardSimple(
+                    card_name=rec_card.get('card_name', 'Unknown'),
+                    reason=rec_card.get('explanation', 'Best rewards for this category'),
+                    estimated_value=f"${rec_card.get('expected_value', 0):.2f}"
+                ),
+                expected_reward=item['expected_reward'],
+                reward_explanation=f"Earn ${item['expected_reward']:.2f} in rewards at {place['name']}"
+            ))
+
+        logger.info(f"Returning {len(formatted_recommendations)} location-based recommendations")
+
+        return LocationBasedRecommendationResponse(
+            user_location={'latitude': request.latitude, 'longitude': request.longitude},
+            places_analyzed=len(nearby_places),
+            top_recommendations=formatted_recommendations,
+            timestamp=datetime.utcnow()
+        )
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error in location-based recommendations: {e}", exc_info=True)
+        raise HTTPException(
+            status_code=500,
+            detail=f"Error generating location-based recommendations: {str(e)}"
+        )
+
+
 
 # ============================================================================
 # DATABASE MANAGEMENT ENDPOINTS (Development/Admin only)

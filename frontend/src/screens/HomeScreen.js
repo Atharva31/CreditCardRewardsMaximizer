@@ -1,8 +1,10 @@
 import React, { useState, useEffect } from 'react';
-import { View, Text, StyleSheet, ScrollView, ActivityIndicator, RefreshControl } from 'react-native';
+import { View, Text, StyleSheet, ScrollView, ActivityIndicator, RefreshControl, TouchableOpacity, Alert } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { API } from '../services/api';
+import LocationService from '../services/locationService';
+import NearbyPlacesCard from '../components/NearbyPlacesCard';
 
 export default function HomeScreen() {
   const [stats, setStats] = useState({
@@ -14,6 +16,10 @@ export default function HomeScreen() {
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [userName, setUserName] = useState('');
+  const [locationPermission, setLocationPermission] = useState(null);
+  const [nearbyRecommendations, setNearbyRecommendations] = useState([]);
+  const [loadingLocation, setLoadingLocation] = useState(false);
+  const [locationError, setLocationError] = useState(null);
 
   const fetchUserData = async () => {
     try {
@@ -36,14 +42,81 @@ export default function HomeScreen() {
     }
   };
 
+  const requestLocationPermissionAndFetchRecommendations = async () => {
+    try {
+      setLoadingLocation(true);
+      setLocationError(null);
+
+      const userId = await AsyncStorage.getItem('userId');
+      if (!userId) {
+        console.log('No user ID found, skipping location request');
+        return;
+      }
+
+      // Check if permission already granted
+      const permissionStatus = await LocationService.getPermissionStatus();
+
+      if (!permissionStatus.granted) {
+        // Check if we've asked before
+        const hasAsked = await LocationService.hasRequestedPermission();
+
+        if (!hasAsked) {
+          // First time - request permission
+          const result = await LocationService.requestPermission();
+          setLocationPermission(result.status);
+
+          if (!result.granted) {
+            setLocationError('Location permission denied. Enable in settings to see nearby recommendations.');
+            return;
+          }
+        } else {
+          // Already asked before and denied
+          setLocationError('Location permission required. Please enable in settings.');
+          return;
+        }
+      } else {
+        setLocationPermission('granted');
+      }
+
+      // Get current location
+      const location = await LocationService.getCurrentLocation();
+
+      if (!location) {
+        setLocationError('Unable to get your location');
+        return;
+      }
+
+      console.log('Current location:', location);
+
+      // Fetch nearby recommendations
+      const response = await API.getLocationBasedRecommendations(
+        userId,
+        location.latitude,
+        location.longitude,
+        2000 // 2km radius
+      );
+
+      setNearbyRecommendations(response.data.top_recommendations || []);
+
+    } catch (error) {
+      console.error('Error with location recommendations:', error);
+      setLocationError('Failed to load nearby recommendations');
+    } finally {
+      setLoadingLocation(false);
+    }
+  };
+
   const onRefresh = async () => {
     setRefreshing(true);
     await fetchUserData();
+    await requestLocationPermissionAndFetchRecommendations();
     setRefreshing(false);
   };
 
   useEffect(() => {
     fetchUserData();
+    // Request location permission and fetch recommendations on mount
+    requestLocationPermissionAndFetchRecommendations();
   }, []);
 
   return (
@@ -101,6 +174,33 @@ export default function HomeScreen() {
               </Text>
             )}
           </View>
+        )}
+
+        {/* Location-based recommendations */}
+        {loadingLocation && (
+          <View style={styles.locationLoadingCard}>
+            <ActivityIndicator size="small" color="#4A90E2" />
+            <Text style={styles.locationLoadingText}>Finding nearby places...</Text>
+          </View>
+        )}
+
+        {!loadingLocation && locationError && (
+          <View style={styles.locationErrorCard}>
+            <Text style={styles.locationErrorText}>📍 {locationError}</Text>
+            <TouchableOpacity
+              style={styles.retryButton}
+              onPress={requestLocationPermissionAndFetchRecommendations}
+            >
+              <Text style={styles.retryButtonText}>Try Again</Text>
+            </TouchableOpacity>
+          </View>
+        )}
+
+        {!loadingLocation && !locationError && nearbyRecommendations.length > 0 && (
+          <NearbyPlacesCard
+            recommendations={nearbyRecommendations}
+            onRefresh={requestLocationPermissionAndFetchRecommendations}
+          />
         )}
       </ScrollView>
     </SafeAreaView>
@@ -211,5 +311,57 @@ const styles = StyleSheet.create({
     color: '#666',
     marginBottom: 8,
     lineHeight: 22,
+  },
+  locationLoadingCard: {
+    backgroundColor: '#fff',
+    margin: 20,
+    marginTop: 10,
+    padding: 20,
+    borderRadius: 12,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.1,
+    shadowRadius: 4,
+    elevation: 3,
+  },
+  locationLoadingText: {
+    marginLeft: 12,
+    fontSize: 15,
+    color: '#666',
+  },
+  locationErrorCard: {
+    backgroundColor: '#FFF3E0',
+    margin: 20,
+    marginTop: 10,
+    padding: 20,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: '#FFB74D',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.1,
+    shadowRadius: 4,
+    elevation: 3,
+  },
+  locationErrorText: {
+    fontSize: 14,
+    color: '#E65100',
+    marginBottom: 12,
+    lineHeight: 20,
+  },
+  retryButton: {
+    backgroundColor: '#4A90E2',
+    paddingVertical: 10,
+    paddingHorizontal: 20,
+    borderRadius: 8,
+    alignSelf: 'flex-start',
+  },
+  retryButtonText: {
+    color: '#fff',
+    fontSize: 14,
+    fontWeight: '600',
   },
 });

@@ -1,160 +1,138 @@
-// src/services/api.js - CORRECTED: Backend doesn't use /api/v1 prefix
-
+// src/services/api.js
 import axios from 'axios';
 
-// 🔥 UPDATE THIS with your current tunnel URL from Terminal 2!
-//const API_BASE_URL = 'https://hip-wolves-yell.loca.lt/api/v1'; //for mobile
-
-console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
-console.log('📡 API Configuration');
-console.log('Base URL:', API_BASE_URL);
-console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
 // Configuration
 // Use your Mac's local IP address for physical device/iOS simulator testing
 // For web browser testing, use localhost
-// const API_BASE_URL = 'http://10.0.0.222:8000/api/v1';  // Mac local IP
-const API_BASE_URL = 'http://127.0.0.1:8000/api/v1';  // For web browser only
+const API_BASE_URL = 'http://10.0.0.222:8000/api/v1';  // Mac local IP
+// const API_BASE_URL = 'http://127.0.0.1:8000/api/v1';  // For web browser only
 // const API_BASE_URL = 'http://192.168.1.98:8000/api/v1';
+// const API_BASE_URL = 'https://chubby-rats-listen.loca.lt/api/v1'
 
+const API_TIMEOUT = 30000;
 
-const api = axios.create({
+console.log('🔧 API Configuration Loaded:');
+console.log('   Base URL:', API_BASE_URL);
+console.log('   Timeout:', API_TIMEOUT);
+
+// Create axios instance
+const apiClient = axios.create({
   baseURL: API_BASE_URL,
+  timeout: API_TIMEOUT,
   headers: {
     'Content-Type': 'application/json',
-    'Bypass-Tunnel-Reminder': 'true',  // Skip localtunnel warning page
   },
-  timeout: 30000, // 30 seconds (tunnels can be slow)
 });
 
-// Request interceptor for debugging
-api.interceptors.request.use(
-  (config) => {
-    const fullURL = config.baseURL + config.url;
-    console.log('→ Making request to:', fullURL);
-    console.log('→ Method:', config.method?.toUpperCase());
-    console.log('→ Data:', config.data);
-    return config;
-  },
-  (error) => {
-    console.error('❌ Request setup error:', error.message);
-    return Promise.reject(error);
-  }
-);
-
-// Response interceptor for debugging
-api.interceptors.response.use(
+// Response interceptor
+apiClient.interceptors.response.use(
   (response) => {
-    console.log('✅ Success:', response.status, response.config.url);
-    console.log('✅ Data:', response.data);
+    console.log('✅ Response received:', response.status);
     return response;
   },
-  (error) => {
-    const fullURL = error.config?.baseURL + error.config?.url;
-    console.error('❌ Request failed');
-    console.error('❌ Status:', error.response?.status);
-    console.error('❌ URL:', fullURL);
-    console.error('❌ Error:', error.response?.data);
-    return Promise.reject(error);
+  async (error) => {
+    console.error('❌ Interceptor caught error:', error.message);
+    const errorMessage = error.response?.data?.detail 
+      || error.message 
+      || 'An error occurred';
+    
+    return Promise.reject(new Error(errorMessage));
   }
 );
 
+// API Service
 export const API = {
-  // Get AI recommendation for a transaction
   getRecommendation: async (transactionData) => {
+    console.log('');
+    console.log('═══════════════════════════════');
+    console.log('🚀 API.getRecommendation called');
+    console.log('═══════════════════════════════');
+    console.log('Full URL:', `${API_BASE_URL}/recommend`);
+    console.log('Method: POST');
+    console.log('Data:', JSON.stringify(transactionData, null, 2));
+    
     try {
-      console.log('🤖 Getting recommendation...');
-      const response = await api.post('/recommend', transactionData);
-      console.log('✨ Recommendation received!');
+      console.log('📡 Sending request...');
+      const response = await apiClient.post('/recommend', transactionData);
+      console.log('✅ Success! Response:', response.data);
       return response;
     } catch (error) {
-      console.error('Failed to get recommendation');
+      console.error('');
+      console.error('╔═══════════════════════════════╗');
+      console.error('║       ERROR DETAILS           ║');
+      console.error('╚═══════════════════════════════╝');
+      console.error('Error name:', error.name);
+      console.error('Error message:', error.message);
+      console.error('Error code:', error.code);
+      console.error('Has response?', !!error.response);
+      if (error.response) {
+        console.error('Response status:', error.response.status);
+        console.error('Response data:', error.response.data);
+      }
+      console.error('Full error:', error);
+      console.error('');
       throw error;
     }
   },
 
-  // Save transaction to database
-  saveTransaction: async (transactionRecord) => {
-    try {
-      console.log('💾 Saving transaction...');
-      const response = await api.post('/transactions', transactionRecord);
-      console.log('✅ Transaction saved!');
-      return response;
-    } catch (error) {
-      console.error('Failed to save transaction');
-      // Don't throw - we don't want to block the user if saving fails
-      return null;
-    }
+  // Legacy endpoint (old CreditCard model)
+  getUserCards: async (userId) => {
+    return await apiClient.get(`/users/${userId}/cards`);
   },
 
-  // Get all transactions for history
-  getTransactions: async (userId = 'user123', filters = {}) => {
-    try {
-      console.log('📜 Getting transactions...');
-      const params = {
-        user_id: userId,
-        ...filters,
-      };
-      const response = await api.get('/transactions', { params });
-      console.log(`✅ Found ${response.data.length} transactions`);
-      return response.data;
-    } catch (error) {
-      console.error('Failed to get transactions');
-      throw error;
-    }
+  // New UserCreditCard (Wallet) endpoints
+  getWalletCards: async (userId, activeOnly = true) => {
+    console.log('🔧 API.getWalletCards called for user:', userId);
+    return await apiClient.get(`/users/${userId}/wallet/cards`, {
+      params: { active_only: activeOnly }
+    });
   },
 
-  // Get user stats (total saved, transaction count, etc.)
-  getUserStats: async (userId = 'user123') => {
-    try {
-      console.log('📊 Getting stats...');
-      const response = await api.get(`/users/${userId}/stats`);
-      console.log('✅ Stats received!');
-      return response.data;
-    } catch (error) {
-      console.error('Failed to get stats');
-      throw error;
-    }
+  addCardToWallet: async (userId, cardData) => {
+    console.log('🔧 API.addCardToWallet called');
+    console.log('User:', userId);
+    console.log('Card Data:', cardData);
+    return await apiClient.post(`/users/${userId}/wallet/cards`, cardData);
   },
 
-  // Get all cards for user
-  getCards: async (userId = 'user123') => {
-    try {
-      console.log('🃏 Getting cards...');
-      const response = await api.get('/cards', {
-        params: { user_id: userId }
-      });
-      console.log(`✅ Found ${response.data.length} cards`);
-      return response.data;
-    } catch (error) {
-      console.error('Failed to get cards');
-      throw error;
-    }
+  updateWalletCard: async (userCardId, updateData) => {
+    console.log('🔧 API.updateWalletCard called for card:', userCardId);
+    return await apiClient.put(`/wallet/cards/${userCardId}`, updateData);
   },
 
-  // Add a new card
-  addCard: async (cardData) => {
-    try {
-      console.log('➕ Adding card...');
-      const response = await api.post('/cards', cardData);
-      console.log('✅ Card added!');
-      return response.data;
-    } catch (error) {
-      console.error('Failed to add card');
-      throw error;
-    }
+  deleteWalletCard: async (userCardId, permanent = false) => {
+    console.log('🔧 API.deleteWalletCard called for card:', userCardId);
+    return await apiClient.delete(`/wallet/cards/${userCardId}`, {
+      params: { permanent }
+    });
   },
 
-  // Delete a card
-  deleteCard: async (cardId) => {
-    try {
-      console.log('🗑️  Deleting card...');
-      const response = await api.delete(`/cards/${cardId}`);
-      console.log('✅ Card deleted!');
-      return response.data;
-    } catch (error) {
-      console.error('Failed to delete card');
-      throw error;
-    }
+  getWalletCardDetails: async (userCardId) => {
+    return await apiClient.get(`/wallet/cards/${userCardId}`);
+  },
+
+  // Card Library endpoints
+  getCardLibrary: async (filters = {}) => {
+    console.log('🔧 API.getCardLibrary called with filters:', filters);
+    return await apiClient.get('/cards/library', {
+      params: filters
+    });
+  },
+
+  getTransactionHistory: async (userId, limit = 50, offset = 0) => {
+    return await apiClient.get(`/users/${userId}/transactions`, {
+      params: { limit, offset }
+    });
+  },
+
+  getUserStats: async (userId) => {
+    return await apiClient.get(`/users/${userId}/stats`);
+  },
+
+  getMonthlyRewards: async (userId, months = 6) => {
+    return await apiClient.get(`/users/${userId}/rewards/monthly`, {
+      params: { months }
+    });
   },
 
   // Authentication methods
@@ -209,6 +187,51 @@ export const API = {
   // User Profile methods
   getUserProfile: async (userId) => {
     return await apiClient.get(`/users/${userId}/profile`);
+  },
+
+  // Location-based methods
+  getNearbyPlaces: async (latitude, longitude, radius = 2000) => {
+    console.log('');
+    console.log('═══════════════════════════════');
+    console.log('🚀 API.getNearbyPlaces called');
+    console.log('═══════════════════════════════');
+    console.log('Location:', { latitude, longitude, radius });
+
+    try {
+      const response = await apiClient.post('/location/nearby-places', {
+        latitude,
+        longitude,
+        radius
+      });
+      console.log('✅ Nearby places fetched:', response.data.length, 'places');
+      return response;
+    } catch (error) {
+      console.error('❌ Error fetching nearby places:', error.message);
+      throw error;
+    }
+  },
+
+  getLocationBasedRecommendations: async (userId, latitude, longitude, radius = 2000) => {
+    console.log('');
+    console.log('═══════════════════════════════');
+    console.log('🚀 API.getLocationBasedRecommendations called');
+    console.log('═══════════════════════════════');
+    console.log('User ID:', userId);
+    console.log('Location:', { latitude, longitude, radius });
+
+    try {
+      const response = await apiClient.post('/location/recommendations', {
+        user_id: userId,
+        latitude,
+        longitude,
+        radius
+      });
+      console.log('✅ Location-based recommendations fetched:', response.data.top_recommendations.length, 'recommendations');
+      return response;
+    } catch (error) {
+      console.error('❌ Error fetching location recommendations:', error.message);
+      throw error;
+    }
   },
 };
 
