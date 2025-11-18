@@ -172,12 +172,6 @@ export default function HistoryScreen() {
             ${totalSaved.toFixed(2)}
           </Text>
         </View>
-        <View style={styles.statCard}>
-          <Text style={styles.statLabel}>Missed Value</Text>
-          <Text style={[styles.statValue, { color: '#FF5252' }]}>
-            ${totalMissed.toFixed(2)}
-          </Text>
-        </View>
       </View>
 
       {/* Time Filter */}
