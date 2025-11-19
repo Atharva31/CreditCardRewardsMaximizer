@@ -13,6 +13,7 @@ import {
 import { SafeAreaView } from 'react-native-safe-area-context';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { API } from '../services/api';
+import MerchantAutocomplete from '../components/MerchantAutocomplete';
 
 const CATEGORIES = [
   { id: 'dining', label: 'Dining', emoji: '🍽️' },
@@ -201,15 +202,17 @@ export default function TransactionScreen() {
 
         {/* Form */}
         <View style={styles.form}>
-          {/* Merchant Input */}
+          {/* Merchant Input with Autocomplete */}
           <Text style={styles.label}>Where are you shopping?</Text>
-          <TextInput
-            style={styles.input}
-            placeholder="e.g., Starbucks, Amazon, Whole Foods"
+          <MerchantAutocomplete
             value={merchant}
-            onChangeText={setMerchant}
-            placeholderTextColor="#999"
+            onMerchantSelect={(merchantName) => setMerchant(merchantName)}
+            onCategorySelect={(categoryId) => setSelectedCategory(categoryId)}
+            apiUrl="http://localhost:8000" // Change for production
           />
+          <Text style={styles.hint}>
+            Start typing to search merchants
+          </Text>
 
           {/* Amount Input */}
           <Text style={styles.label}>How much?</Text>
@@ -293,6 +296,12 @@ const styles = StyleSheet.create({
     color: '#333',
     marginTop: 20,
     marginBottom: 10,
+  },
+  hint: {
+    fontSize: 12,
+    color: '#666',
+    marginTop: 6,
+    fontStyle: 'italic',
   },
   input: {
     backgroundColor: '#fff',
