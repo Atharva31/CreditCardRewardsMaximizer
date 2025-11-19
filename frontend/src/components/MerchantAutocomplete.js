@@ -2,208 +2,260 @@ import React, { useState, useEffect, useRef } from 'react';
 import {
   View,
   TextInput,
-  FlatList,
-  TouchableOpacity,
   Text,
-  Image,
+  TouchableOpacity,
   StyleSheet,
   ActivityIndicator,
   Keyboard,
+  ScrollView,
 } from 'react-native';
 
-/**
- * MerchantAutocomplete Component
- * 
- * Provides autocomplete functionality for merchant search with:
- * - Debounced search (300ms delay)
- * - Dropdown with merchant results
- * - Logo display
- * - Auto-category selection
- * 
- * Props:
- * - onMerchantSelect: Callback when merchant is selected
- * - onCategorySelect: Callback when category should be auto-selected
- * - value: Initial/controlled value for the input
- * - apiUrl: Base API URL (default: http://localhost:8000)
- */
-const MerchantAutocomplete = ({ 
-  onMerchantSelect, 
-  onCategorySelect, 
+export default function MerchantAutocomplete({
   value,
-  apiUrl = 'http://localhost:8000' // Change this for production
-}) => {
-  const [searchQuery, setSearchQuery] = useState(value || '');
-  const [merchants, setMerchants] = useState([]);
-  const [showDropdown, setShowDropdown] = useState(false);
+  onMerchantSelect,
+  onCategorySelect,
+  apiUrl,
+}) {
+  const [query, setQuery] = useState(value || '');
+  const [results, setResults] = useState([]);
   const [loading, setLoading] = useState(false);
-  const inputRef = useRef(null);
+  const [showResults, setShowResults] = useState(false);
+  const [isSelectingMerchant, setIsSelectingMerchant] = useState(false);
+  const debounceTimer = useRef(null);
 
-  // Debounce search to avoid too many API calls
   useEffect(() => {
-    const timer = setTimeout(() => {
-      if (searchQuery.length >= 2) {
-        searchMerchants(searchQuery);
-      } else {
-        setMerchants([]);
-        setShowDropdown(false);
-        setLoading(false);
-      }
-    }, 300); // Wait 300ms after user stops typing
-
-    return () => clearTimeout(timer);
-  }, [searchQuery]);
-
-  // Update search query when value prop changes
-  useEffect(() => {
-    if (value !== undefined && value !== searchQuery) {
-      setSearchQuery(value);
-    }
+    setQuery(value || '');
   }, [value]);
 
-  /**
-   * Search merchants via API
-   */
-  const searchMerchants = async (query) => {
+  const loadAllMerchants = async () => {
+    // Don't search if we're in the middle of selecting a merchant
+    if (isSelectingMerchant) return;
+
     setLoading(true);
+
     try {
-      const response = await fetch(
-        `${apiUrl}/api/v1/merchants/search?q=${encodeURIComponent(query)}&limit=10`
-      );
+      // Load all merchants (no query parameter)
+      const response = await fetch(`${apiUrl}/api/v1/merchants`);
       
-      if (!response.ok) {
-        throw new Error('Failed to search merchants');
+      if (response.ok) {
+        const data = await response.json();
+        setResults(data || []);
+      } else {
+        console.error('Merchant load error:', response.status);
+        setResults([]);
       }
-      
-      const data = await response.json();
-      setMerchants(data);
-      setShowDropdown(data.length > 0);
     } catch (error) {
-      console.error('Error searching merchants:', error);
-      setMerchants([]);
-      setShowDropdown(false);
+      console.error('Merchant load error:', error);
+      setResults([]);
     } finally {
       setLoading(false);
     }
   };
 
-  /**
-   * Handle merchant selection from dropdown
-   */
-  const handleMerchantSelect = (merchant) => {
-    setSearchQuery(merchant.merchant_name);
-    setShowDropdown(false);
-    setMerchants([]);
-    Keyboard.dismiss();
+  const searchMerchants = async (searchQuery) => {
+    // Don't search if we're in the middle of selecting a merchant
+    if (isSelectingMerchant) return;
+    
+    // If empty query, show all merchants
+    if (!searchQuery || searchQuery.trim() === '') {
+      loadAllMerchants();
+      return;
+    }
+
+    setLoading(true);
+
+    try {
+      const response = await fetch(
+        `${apiUrl}/api/v1/merchants/search?q=${encodeURIComponent(searchQuery)}`
+      );
+      
+      if (response.ok) {
+        const data = await response.json();
+        setResults(data || []);
+      } else {
+        console.error('Merchant search error:', response.status);
+        setResults([]);
+      }
+    } catch (error) {
+      console.error('Merchant search error:', error);
+      setResults([]);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleTextChange = (text) => {
+    setQuery(text);
+    setIsSelectingMerchant(false);
+    setShowResults(true);
+
+    // Clear previous timer
+    if (debounceTimer.current) {
+      clearTimeout(debounceTimer.current);
+    }
+
+    // Debounce search - search even with empty text to show all
+    debounceTimer.current = setTimeout(() => {
+      searchMerchants(text);
+    }, 300);
+  };
+
+  const handleSelectMerchant = (merchant) => {
+    // Set flag immediately to prevent blur from interfering
+    setIsSelectingMerchant(true);
+    setQuery(merchant.merchant_name);
+    setShowResults(false);
+    setResults([]);
     
     // Notify parent components
     if (onMerchantSelect) {
       onMerchantSelect(merchant.merchant_name);
     }
-    if (onCategorySelect) {
+    if (onCategorySelect && merchant.primary_category) {
       onCategorySelect(merchant.primary_category);
     }
-  };
-
-  /**
-   * Handle text input change
-   */
-  const handleTextChange = (text) => {
-    setSearchQuery(text);
-    if (text.length < 2) {
-      setShowDropdown(false);
-    }
-    // Notify parent of manual text entry
-    if (onMerchantSelect) {
-      onMerchantSelect(text);
-    }
-  };
-
-  /**
-   * Render merchant logo or placeholder
-   */
-  const renderLogo = (merchant) => {
-    if (merchant.logo_url) {
-      return (
-        <Image
-          source={{ uri: merchant.logo_url }}
-          style={styles.logo}
-          onError={() => {
-            // Fallback to placeholder on error
-            console.log('Logo failed to load:', merchant.logo_url);
-          }}
-        />
-      );
-    }
     
-    // Placeholder with first letter
-    return (
-      <View style={styles.logoPlaceholder}>
-        <Text style={styles.logoPlaceholderText}>
-          {merchant.merchant_name.charAt(0).toUpperCase()}
-        </Text>
-      </View>
-    );
+    Keyboard.dismiss();
+    
+    // Reset flag after a short delay
+    setTimeout(() => {
+      setIsSelectingMerchant(false);
+    }, 500);
   };
+
+  const handleFocus = () => {
+    // Don't show results if we just selected a merchant
+    if (isSelectingMerchant) return;
+    
+    setShowResults(true);
+    
+    // Always load merchants when focusing
+    // If there's a query, search for it; otherwise show all
+    if (query && query.trim() !== '') {
+      searchMerchants(query);
+    } else {
+      loadAllMerchants();
+    }
+  };
+
+  const handleBlur = () => {
+    // Don't hide if we're selecting a merchant
+    if (isSelectingMerchant) return;
+    
+    // Delay hiding results to allow tap on result
+    setTimeout(() => {
+      if (!isSelectingMerchant) {
+        setShowResults(false);
+        setResults([]);
+      }
+    }, 150);
+  };
+
+  const getCategoryEmoji = (category) => {
+    const emojiMap = {
+      dining: '🍽️',
+      travel: '✈️',
+      groceries: '🛒',
+      gas: '⛽',
+      entertainment: '🎬',
+      shopping: '�️',
+      other: '📦',
+    };
+    return emojiMap[category] || '📦';
+  };
+
+  const shouldShowResults = showResults && !isSelectingMerchant;
 
   return (
     <View style={styles.container}>
       <TextInput
-        ref={inputRef}
         style={styles.input}
         placeholder="e.g., Starbucks, Amazon, Whole Foods"
-        value={searchQuery}
+        value={query}
         onChangeText={handleTextChange}
-        onFocus={() => 
-          searchQuery.length >= 2 && 
-          merchants.length > 0 && 
-          setShowDropdown(true)
-        }
+        onFocus={handleFocus}
+        onBlur={handleBlur}
+        onSubmitEditing={() => {
+          // Handle Enter key
+          if (results.length > 0) {
+            // Select first result from filtered list
+            handleSelectMerchant(results[0]);
+          } else {
+            // No results - just close dropdown and keep typed text
+            setShowResults(false);
+            setResults([]);
+            Keyboard.dismiss();
+            
+            // Still notify parent with typed text (manual entry)
+            if (query.trim() && onMerchantSelect) {
+              onMerchantSelect(query.trim());
+            }
+          }
+        }}
+        placeholderTextColor="#999"
         autoCapitalize="words"
         autoCorrect={false}
-        placeholderTextColor="#999"
+        returnKeyType="done"
       />
-      
-      {loading && (
-        <View style={styles.loadingContainer}>
-          <ActivityIndicator size="small" color="#4A90E2" />
-        </View>
-      )}
-      
-      {showDropdown && !loading && (
-        <View style={styles.dropdown}>
-          <FlatList
-            data={merchants}
-            keyExtractor={(item) => item.merchant_id.toString()}
-            keyboardShouldPersistTaps="handled"
-            nestedScrollEnabled={true}
-            renderItem={({ item }) => (
-              <TouchableOpacity
-                style={styles.dropdownItem}
-                onPress={() => handleMerchantSelect(item)}
-              >
-                {renderLogo(item)}
-                <View style={styles.merchantInfo}>
-                  <Text style={styles.merchantName}>
-                    {item.merchant_name}
+
+      {/* Results Dropdown - Show when focused */}
+      {shouldShowResults && (
+        <View style={styles.resultsContainer}>
+          {loading ? (
+            <View style={styles.loadingContainer}>
+              <ActivityIndicator size="small" color="#4A90E2" />
+              <Text style={styles.loadingText}>Loading merchants...</Text>
+            </View>
+          ) : results.length > 0 ? (
+            <ScrollView 
+              style={styles.resultsScrollView}
+              keyboardShouldPersistTaps="handled"
+              nestedScrollEnabled={true}
+            >
+              {results.slice(0, 50).map((merchant, index) => (
+                <TouchableOpacity
+                  key={`${merchant.merchant_id}-${index}`}
+                  style={styles.resultItem}
+                  onPress={() => handleSelectMerchant(merchant)}
+                  activeOpacity={0.7}
+                >
+                  <View style={styles.resultContent}>
+                    <Text style={styles.merchantEmoji}>
+                      {getCategoryEmoji(merchant.primary_category)}
+                    </Text>
+                    <View style={styles.merchantInfo}>
+                      <Text style={styles.merchantName}>{merchant.merchant_name}</Text>
+                      <Text style={styles.merchantCategory}>
+                        {merchant.primary_category}
+                      </Text>
+                    </View>
+                  </View>
+                </TouchableOpacity>
+              ))}
+              {results.length > 50 && (
+                <View style={styles.moreResultsHint}>
+                  <Text style={styles.moreResultsText}>
+                    + {results.length - 50} more merchants
                   </Text>
-                  <Text style={styles.merchantCategory}>
-                    {item.primary_category.charAt(0).toUpperCase() + 
-                     item.primary_category.slice(1)}
+                  <Text style={styles.moreResultsSubtext}>
+                    Keep typing to narrow results
                   </Text>
                 </View>
-              </TouchableOpacity>
-            )}
-            ListEmptyComponent={
-              <View style={styles.emptyContainer}>
-                <Text style={styles.emptyText}>No merchants found</Text>
-              </View>
-            }
-          />
+              )}
+            </ScrollView>
+          ) : (
+            <View style={styles.noResultsContainer}>
+              <Text style={styles.noResultsText}>No merchants found</Text>
+              <Text style={styles.noResultsHint}>
+                {query ? 'Try a different search' : 'No merchants available'}
+              </Text>
+            </View>
+          )}
         </View>
       )}
     </View>
   );
-};
+}
 
 const styles = StyleSheet.create({
   container: {
@@ -218,54 +270,50 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: '#E0E0E0',
   },
-  loadingContainer: {
+  resultsContainer: {
     position: 'absolute',
-    right: 12,
-    top: 15,
-  },
-  dropdown: {
-    position: 'absolute',
-    top: 55,
+    top: 55, // Just below the input
     left: 0,
     right: 0,
-    backgroundColor: 'white',
+    backgroundColor: '#fff',
     borderRadius: 12,
     borderWidth: 1,
     borderColor: '#E0E0E0',
-    maxHeight: 200,
+    maxHeight: 250,
     shadowColor: '#000',
     shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.15,
+    shadowOpacity: 0.1,
     shadowRadius: 8,
     elevation: 5,
     zIndex: 1001,
   },
-  dropdownItem: {
-    padding: 12,
-    borderBottomWidth: 1,
-    borderBottomColor: '#f0f0f0',
+  loadingContainer: {
     flexDirection: 'row',
     alignItems: 'center',
-  },
-  logo: {
-    width: 32,
-    height: 32,
-    marginRight: 12,
-    borderRadius: 4,
-  },
-  logoPlaceholder: {
-    width: 32,
-    height: 32,
-    marginRight: 12,
-    borderRadius: 4,
-    backgroundColor: '#4A90E2',
     justifyContent: 'center',
-    alignItems: 'center',
+    padding: 20,
   },
-  logoPlaceholderText: {
-    color: '#fff',
-    fontSize: 16,
-    fontWeight: 'bold',
+  loadingText: {
+    marginLeft: 10,
+    fontSize: 14,
+    color: '#666',
+  },
+  resultsScrollView: {
+    // ScrollView for results - avoids nested VirtualizedLists warning
+    maxHeight: 250,
+  },
+  resultItem: {
+    borderBottomWidth: 1,
+    borderBottomColor: '#F0F0F0',
+  },
+  resultContent: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    padding: 12,
+  },
+  merchantEmoji: {
+    fontSize: 24,
+    marginRight: 12,
   },
   merchantInfo: {
     flex: 1,
@@ -273,21 +321,43 @@ const styles = StyleSheet.create({
   merchantName: {
     fontSize: 16,
     fontWeight: '500',
-    color: '#000',
+    color: '#333',
   },
   merchantCategory: {
     fontSize: 12,
     color: '#666',
     marginTop: 2,
+    textTransform: 'capitalize',
   },
-  emptyContainer: {
+  noResultsContainer: {
     padding: 20,
     alignItems: 'center',
   },
-  emptyText: {
-    color: '#999',
+  noResultsText: {
     fontSize: 14,
+    color: '#999',
+    fontWeight: '500',
+  },
+  noResultsHint: {
+    fontSize: 12,
+    color: '#BBB',
+    marginTop: 4,
+  },
+  moreResultsHint: {
+    padding: 16,
+    alignItems: 'center',
+    backgroundColor: '#F9F9F9',
+    borderTopWidth: 1,
+    borderTopColor: '#E0E0E0',
+  },
+  moreResultsText: {
+    fontSize: 13,
+    color: '#666',
+    fontWeight: '500',
+  },
+  moreResultsSubtext: {
+    fontSize: 11,
+    color: '#999',
+    marginTop: 4,
   },
 });
-
-export default MerchantAutocomplete;
