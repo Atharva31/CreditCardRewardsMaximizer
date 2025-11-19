@@ -121,7 +121,13 @@ export default function App() {
           ) : (
             // User wants to login: Show the Login screen
             <Stack.Screen name="Login">
-              {(props) => <LoginScreen {...props} onLogin={handleLogin} />}
+              {(props) => (
+                <LoginScreen
+                  {...props}
+                  onLogin={handleLogin}
+                  onBack={() => setShowLanding(true)}
+                />
+              )}
             </Stack.Screen>
           )}
         </Stack.Navigator>
