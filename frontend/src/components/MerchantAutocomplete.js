@@ -38,6 +38,7 @@ export default function MerchantAutocomplete({
   const [loading, setLoading] = useState(false);
   const [showResults, setShowResults] = useState(false);
   const [isSelectingMerchant, setIsSelectingMerchant] = useState(false);
+  const [isScrolling, setIsScrolling] = useState(false);
   const debounceTimer = useRef(null);
   const isFocused = useIsFocused();
 
@@ -137,16 +138,27 @@ export default function MerchantAutocomplete({
   };
 
   const handleBlur = () => {
-    // Don't hide if we're selecting a merchant
-    if (isSelectingMerchant) return;
-    
+    // Don't hide if we're selecting a merchant or scrolling
+    if (isSelectingMerchant || isScrolling) return;
+
     // Delay hiding results to allow tap on result
     setTimeout(() => {
-      if (!isSelectingMerchant) {
+      if (!isSelectingMerchant && !isScrolling) {
         setShowResults(false);
         setResults([]);
       }
-    }, 150);
+    }, 200);
+  };
+
+  const handleScrollBegin = () => {
+    setIsScrolling(true);
+  };
+
+  const handleScrollEnd = () => {
+    // Delay resetting to allow for momentum scrolling
+    setTimeout(() => {
+      setIsScrolling(false);
+    }, 100);
   };
 
   const handleCloseDropdown = () => {
@@ -223,6 +235,9 @@ export default function MerchantAutocomplete({
               showsVerticalScrollIndicator={true}
               bounces={true}
               scrollEventThrottle={16}
+              onScrollBeginDrag={handleScrollBegin}
+              onScrollEndDrag={handleScrollEnd}
+              onMomentumScrollEnd={handleScrollEnd}
             >
               {results.slice(0, DEFAULT_RESULT_LIMIT).map((merchant, index) => (
                 <TouchableOpacity
