@@ -34,6 +34,8 @@ export default function TransactionScreen() {
   const [showResult, setShowResult] = useState(false);
   const [recommendation, setRecommendation] = useState(null);
   const [userId, setUserId] = useState(null);
+  const [savingTransaction, setSavingTransaction] = useState(false);
+  const [selectedCard, setSelectedCard] = useState(null);
   const isFocused = useIsFocused();
 
   useEffect(() => {
@@ -63,6 +65,10 @@ export default function TransactionScreen() {
       Alert.alert('Error', 'Please enter a valid amount');
       return;
     }
+    if (!userId) {
+      Alert.alert('Error', 'Please log in to get recommendations');
+      return;
+    }
 
     setLoading(true);
 
@@ -70,7 +76,7 @@ export default function TransactionScreen() {
       console.log('Sending request to API...');
 
       const transactionData = {
-        user_id: 'user123',
+        user_id: userId,
         merchant: merchant.trim(),
         amount: parseFloat(amount),
         category: selectedCategory,
@@ -80,17 +86,105 @@ export default function TransactionScreen() {
       console.log('API Response:', response.data);
 
       setRecommendation(response.data);
+      setSelectedCard(response.data.recommended_card);
       setShowResult(true);
 
     } catch (error) {
       console.error('API Error:', error);
-      Alert.alert(
-        'Connection Error',
-        'Could not connect to server. Make sure backend is running.\n\nError: ' + error.message
-      );
+
+      // Check for specific error messages
+      const errorMessage = error.message || '';
+
+      if (errorMessage.includes('No active credit cards')) {
+        Alert.alert(
+          'No Cards Found',
+          'You need to add credit cards to your wallet before getting recommendations. Go to the Cards tab to add your cards.',
+          [{ text: 'OK' }]
+        );
+      } else if (errorMessage.includes('User not found')) {
+        Alert.alert(
+          'Account Error',
+          'Your account was not found. Please try logging in again.',
+          [{ text: 'OK' }]
+        );
+      } else {
+        Alert.alert(
+          'Connection Error',
+          'Could not connect to server. Make sure backend is running.\n\nError: ' + errorMessage
+        );
+      }
     } finally {
       setLoading(false);
     }
+  };
+
+  const handleAddToTransactions = async () => {
+    if (!recommendation || !userId || !selectedCard) return;
+
+    setSavingTransaction(true);
+
+    try {
+      const card = selectedCard;
+      const optimalCard = recommendation.recommended_card;
+
+      // Parse the estimated values
+      const estimatedValue = card.estimated_value || '$0.00';
+      const valueAmount = parseFloat(estimatedValue.replace('$', '')) || 0;
+
+      const optimalValue = optimalCard.estimated_value || '$0.00';
+      const optimalAmount = parseFloat(optimalValue.replace('$', '')) || 0;
+
+      const transactionData = {
+        user_id: userId,
+        merchant: merchant.trim(),
+        amount: parseFloat(amount),
+        category: selectedCategory,
+        card_used_id: card.card_id,
+        recommended_card_id: optimalCard.card_id,
+        total_value_earned: valueAmount,
+        optimal_value: optimalAmount,
+        recommendation_explanation: card.reason || '',
+      };
+
+      await API.createTransaction(transactionData);
+
+      // Close modal first, then show alert
+      const merchantName = merchant;
+      const amountValue = amount;
+      const cardName = card.card_name;
+
+      setShowResult(false);
+      setMerchant('');
+      setAmount('');
+      setRecommendation(null);
+      setSelectedCard(null);
+
+      // Show alert after modal is closed
+      setTimeout(() => {
+        Alert.alert(
+          'Transaction Added',
+          `Successfully added ${merchantName} transaction for $${amountValue} using ${cardName}`,
+          [{ text: 'OK' }]
+        );
+      }, 300);
+
+    } catch (error) {
+      console.error('Error saving transaction:', error);
+
+      // Close modal first, then show error
+      setShowResult(false);
+      setSavingTransaction(false);
+
+      setTimeout(() => {
+        Alert.alert(
+          'Error',
+          'Failed to save transaction. Please try again.\n\nError: ' + error.message
+        );
+      }, 300);
+      return;
+    }
+
+    setSavingTransaction(false);
   };
 
   const CategoryButton = ({ category }) => {
@@ -109,9 +203,15 @@ export default function TransactionScreen() {
   };
 
   const ResultModal = () => {
-    if (!recommendation) return null;
+    if (!recommendation || !selectedCard) return null;
 
-    const card = recommendation.recommended_card;
+    const optimalCard = recommendation.recommended_card;
+    const isOptimalSelected = selectedCard.card_id === optimalCard.card_id;
+
+    // Calculate difference from optimal
+    const selectedValue = parseFloat(selectedCard.estimated_value?.replace('$', '') || '0');
+    const optimalValue = parseFloat(optimalCard.estimated_value?.replace('$', '') || '0');
+    const difference = optimalValue - selectedValue;
 
     return (
       <Modal visible={showResult} animationType="slide" transparent>
@@ -126,50 +226,100 @@ export default function TransactionScreen() {
                 </TouchableOpacity>
               </View>
 
-              {/* Recommended Card */}
-              <View style={styles.recommendedCard}>
-                <Text style={styles.useThisLabel}>USE THIS CARD</Text>
-                <Text style={styles.cardName}>{card.card_name}</Text>
+              {/* Selected Card */}
+              <View style={[styles.recommendedCard, !isOptimalSelected && styles.selectedCardNotOptimal]}>
+                <Text style={styles.useThisLabel}>
+                  {isOptimalSelected ? 'BEST CARD' : 'SELECTED CARD'}
+                </Text>
+                <Text style={styles.cardName}>{selectedCard.card_name}</Text>
 
                 <View style={styles.valueBox}>
-                  <Text style={styles.valueLabel}>Estimated Value</Text>
+                  <Text style={styles.valueLabel}>You'll Earn</Text>
                   <Text style={styles.valueAmount}>
-                    {card.estimated_value}
+                    {selectedCard.estimated_value}
                   </Text>
                 </View>
 
-                <View style={styles.explanationBox}>
-                  <Text style={styles.explanationText}>{card.reason}</Text>
-                </View>
+                {!isOptimalSelected && difference > 0 && (
+                  <View style={styles.missedValueBox}>
+                    <Text style={styles.missedValueText}>
+                      You'll miss ${difference.toFixed(2)} by not using {optimalCard.card_name}
+                    </Text>
+                  </View>
+                )}
               </View>
 
-              {/* Alternative Cards */}
-              {recommendation.alternatives && recommendation.alternatives.length > 0 && (
+              {/* Other Cards */}
+              {(recommendation.alternatives && recommendation.alternatives.length > 0) || !isOptimalSelected ? (
                 <View style={styles.alternativesSection}>
-                  <Text style={styles.alternativesTitle}>Other Options</Text>
-                  {recommendation.alternatives.slice(0, 2).map((altCard, idx) => (
-                    <View key={idx} style={styles.alternativeCard}>
-                      <View>
+                  <Text style={styles.alternativesTitle}>
+                    {isOptimalSelected ? 'Other Options' : 'All Cards'}
+                  </Text>
+
+                  {/* Show optimal card if not selected */}
+                  {!isOptimalSelected && (
+                    <TouchableOpacity
+                      style={[styles.alternativeCard, styles.optimalCardOption]}
+                      onPress={() => setSelectedCard(optimalCard)}
+                    >
+                      <View style={styles.alternativeCardContent}>
+                        <View>
+                          <Text style={styles.alternativeCardName}>{optimalCard.card_name}</Text>
+                          <Text style={styles.optimalLabel}>RECOMMENDED</Text>
+                        </View>
+                        <Text style={styles.alternativeCardValueGreen}>
+                          {optimalCard.estimated_value}
+                        </Text>
+                      </View>
+                    </TouchableOpacity>
+                  )}
+
+                  {/* Show alternatives */}
+                  {recommendation.alternatives.slice(0, 3).map((altCard, idx) => (
+                    <TouchableOpacity
+                      key={idx}
+                      style={[
+                        styles.alternativeCard,
+                        selectedCard.card_id === altCard.card_id && styles.alternativeCardSelected
+                      ]}
+                      onPress={() => setSelectedCard(altCard)}
+                    >
+                      <View style={styles.alternativeCardContent}>
                         <Text style={styles.alternativeCardName}>{altCard.card_name}</Text>
                         <Text style={styles.alternativeCardValue}>
                           {altCard.estimated_value}
                         </Text>
                       </View>
-                    </View>
+                    </TouchableOpacity>
                   ))}
                 </View>
-              )}
+              ) : null}
 
-              {/* Action Button */}
+              {/* Action Buttons */}
               <TouchableOpacity
-                style={styles.doneButton}
+                style={[styles.addTransactionButton, savingTransaction && styles.submitButtonDisabled]}
+                onPress={handleAddToTransactions}
+                disabled={savingTransaction}
+              >
+                {savingTransaction ? (
+                  <>
+                    <ActivityIndicator color="#fff" size="small" />
+                    <Text style={styles.addTransactionButtonText}>  Saving...</Text>
+                  </>
+                ) : (
+                  <Text style={styles.addTransactionButtonText}>Add to Transactions</Text>
+                )}
+              </TouchableOpacity>
+
+              <TouchableOpacity
+                style={styles.closeModalButton}
                 onPress={() => {
                   setShowResult(false);
                   setMerchant('');
                   setAmount('');
                 }}
               >
-                <Text style={styles.doneButtonText}>Got It!</Text>
+                <Text style={styles.closeModalButtonText}>Close</Text>
               </TouchableOpacity>
             </ScrollView>
           </View>
@@ -180,7 +330,11 @@ export default function TransactionScreen() {
 
   return (
     <SafeAreaView style={styles.container}>
-      <ScrollView showsVerticalScrollIndicator={false}>
+      <ScrollView
+        showsVerticalScrollIndicator={false}
+        keyboardShouldPersistTaps="handled"
+        nestedScrollEnabled={true}
+      >
         {/* Header */}
         <View style={styles.header}>
           <Text style={styles.title}>New Transaction</Text>
@@ -195,7 +349,6 @@ export default function TransactionScreen() {
             value={merchant}
             onMerchantSelect={(merchantName) => setMerchant(merchantName)}
             onCategorySelect={(categoryId) => setSelectedCategory(categoryId)}
-            apiUrl="http://localhost:8000" // Change for production
           />
           <Text style={styles.hint}>
             Start typing to search merchants
@@ -471,15 +624,56 @@ const styles = StyleSheet.create({
     borderRadius: 12,
     marginBottom: 8,
   },
+  alternativeCardSelected: {
+    backgroundColor: '#E3F2FD',
+    borderWidth: 2,
+    borderColor: '#4A90E2',
+  },
+  alternativeCardContent: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+  },
   alternativeCardName: {
     fontSize: 14,
     fontWeight: '600',
     color: '#333',
   },
   alternativeCardValue: {
-    fontSize: 12,
+    fontSize: 14,
+    color: '#666',
+    fontWeight: '600',
+  },
+  alternativeCardValueGreen: {
+    fontSize: 14,
     color: '#4CAF50',
-    marginTop: 4,
+    fontWeight: 'bold',
+  },
+  optimalCardOption: {
+    backgroundColor: '#E8F5E9',
+    borderWidth: 1,
+    borderColor: '#4CAF50',
+  },
+  optimalLabel: {
+    fontSize: 10,
+    color: '#4CAF50',
+    fontWeight: 'bold',
+    marginTop: 2,
+  },
+  selectedCardNotOptimal: {
+    borderColor: '#FF9800',
+    backgroundColor: '#FFF3E0',
+  },
+  missedValueBox: {
+    backgroundColor: '#FFEBEE',
+    padding: 10,
+    borderRadius: 8,
+    marginTop: 12,
+  },
+  missedValueText: {
+    fontSize: 12,
+    color: '#D32F2F',
+    textAlign: 'center',
   },
   doneButton: {
     backgroundColor: '#4A90E2',
@@ -492,5 +686,31 @@ const styles = StyleSheet.create({
     color: '#fff',
     fontSize: 16,
     fontWeight: 'bold',
+  },
+  addTransactionButton: {
+    backgroundColor: '#4CAF50',
+    padding: 18,
+    borderRadius: 12,
+    alignItems: 'center',
+    marginTop: 20,
+    flexDirection: 'row',
+    justifyContent: 'center',
+  },
+  addTransactionButtonText: {
+    color: '#fff',
+    fontSize: 16,
+    fontWeight: 'bold',
+  },
+  closeModalButton: {
+    backgroundColor: '#E0E0E0',
+    padding: 14,
+    borderRadius: 12,
+    alignItems: 'center',
+    marginTop: 10,
+  },
+  closeModalButtonText: {
+    color: '#666',
+    fontSize: 14,
+    fontWeight: '600',
   },
 });

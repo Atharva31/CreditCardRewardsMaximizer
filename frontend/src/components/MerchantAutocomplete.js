@@ -10,6 +10,7 @@ import {
   ScrollView,
 } from 'react-native';
 import { useIsFocused } from '@react-navigation/native';
+import { API } from '../services/api';
 
 const DEFAULT_RESULT_LIMIT = 100;
 
@@ -31,13 +32,13 @@ export default function MerchantAutocomplete({
   value,
   onMerchantSelect,
   onCategorySelect,
-  apiUrl,
 }) {
   const [query, setQuery] = useState(value || '');
   const [results, setResults] = useState([]);
   const [loading, setLoading] = useState(false);
   const [showResults, setShowResults] = useState(false);
   const [isSelectingMerchant, setIsSelectingMerchant] = useState(false);
+  const [isScrolling, setIsScrolling] = useState(false);
   const debounceTimer = useRef(null);
   const isFocused = useIsFocused();
 
@@ -61,20 +62,8 @@ export default function MerchantAutocomplete({
     setLoading(true);
 
     try {
-      const params = new URLSearchParams({
-        q: searchQuery,
-        limit: String(DEFAULT_RESULT_LIMIT),
-      });
-
-      const response = await fetch(`${apiUrl}/api/v1/merchants/search?${params.toString()}`);
-
-      if (response.ok) {
-        const data = await response.json();
-        setResults(data || []);
-      } else {
-        console.error('Merchant fetch error:', response.status);
-        setResults([]);
-      }
+      const data = await API.searchMerchants(searchQuery, DEFAULT_RESULT_LIMIT);
+      setResults(data || []);
     } catch (error) {
       console.error('Merchant fetch error:', error);
       setResults([]);
@@ -149,16 +138,27 @@ export default function MerchantAutocomplete({
   };
 
   const handleBlur = () => {
-    // Don't hide if we're selecting a merchant
-    if (isSelectingMerchant) return;
-    
+    // Don't hide if we're selecting a merchant or scrolling
+    if (isSelectingMerchant || isScrolling) return;
+
     // Delay hiding results to allow tap on result
     setTimeout(() => {
-      if (!isSelectingMerchant) {
+      if (!isSelectingMerchant && !isScrolling) {
         setShowResults(false);
         setResults([]);
       }
-    }, 150);
+    }, 200);
+  };
+
+  const handleScrollBegin = () => {
+    setIsScrolling(true);
+  };
+
+  const handleScrollEnd = () => {
+    // Delay resetting to allow for momentum scrolling
+    setTimeout(() => {
+      setIsScrolling(false);
+    }, 100);
   };
 
   const handleCloseDropdown = () => {
@@ -227,10 +227,17 @@ export default function MerchantAutocomplete({
               <Text style={styles.loadingText}>Loading merchants...</Text>
             </View>
           ) : results.length > 0 ? (
-            <ScrollView 
+            <ScrollView
               style={styles.resultsScrollView}
+              contentContainerStyle={styles.resultsScrollViewContent}
               keyboardShouldPersistTaps="handled"
               nestedScrollEnabled={true}
+              showsVerticalScrollIndicator={true}
+              bounces={true}
+              scrollEventThrottle={16}
+              onScrollBeginDrag={handleScrollBegin}
+              onScrollEndDrag={handleScrollEnd}
+              onMomentumScrollEnd={handleScrollEnd}
             >
               {results.slice(0, DEFAULT_RESULT_LIMIT).map((merchant, index) => (
                 <TouchableOpacity
@@ -299,14 +306,13 @@ const styles = StyleSheet.create({
     borderRadius: 12,
     borderWidth: 1,
     borderColor: '#E0E0E0',
-    maxHeight: 250,
+    maxHeight: 300,
     shadowColor: '#000',
     shadowOffset: { width: 0, height: 2 },
     shadowOpacity: 0.1,
     shadowRadius: 8,
     elevation: 5,
     zIndex: 1001,
-    overflow: 'hidden',
   },
   dropdownHeader: {
     flexDirection: 'row',
@@ -351,8 +357,11 @@ const styles = StyleSheet.create({
     color: '#666',
   },
   resultsScrollView: {
-    // ScrollView for results - avoids nested VirtualizedLists warning
-    maxHeight: 250,
+    // Fixed height for scrollable area on mobile
+    maxHeight: 200,
+  },
+  resultsScrollViewContent: {
+    flexGrow: 1,
   },
   resultItem: {
     borderBottomWidth: 1,

@@ -271,6 +271,19 @@ export const API = {
       throw error;
     }
   },
+
+  // Merchant search for autocomplete
+  searchMerchants: async (query = '', limit = 100) => {
+    try {
+      const response = await apiClient.get('/merchants/search', {
+        params: { q: query, limit }
+      });
+      return response.data;
+    } catch (error) {
+      console.error('❌ Error searching merchants:', error.message);
+      throw error;
+    }
+  },
 };
 
 export default API;
