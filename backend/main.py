@@ -37,7 +37,7 @@ from crud import (
     calculate_transaction_stats, create_transaction_feedback,
     get_user_behavior, update_user_behavior, create_automation_rule,
     get_user_automation_rules, get_or_create_merchant, create_credit_card, update_card, deactivate_card, get_card,
-    get_user_analytics,
+    get_user_analytics, update_user,
     # New UserCreditCard CRUD operations
     add_user_credit_card, get_user_credit_cards, get_user_credit_card,
     update_user_credit_card, delete_user_credit_card, deactivate_user_credit_card,
@@ -904,6 +904,60 @@ async def get_user_profile(user_id: str, db: Session = Depends(get_db)):
             "default_optimization_goal": user.default_optimization_goal.value if user.default_optimization_goal else None,
             "created_at": user.created_at.isoformat(),
             "is_active": user.is_active
+        }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+class UserProfileUpdate(BaseModel):
+    """Request model for updating user profile"""
+    full_name: Optional[str] = None
+    phone: Optional[str] = None
+    default_optimization_goal: Optional[OptimizationGoal] = None
+
+
+@app.put("/api/v1/users/{user_id}/profile")
+async def update_user_profile(
+    user_id: str,
+    profile_update: UserProfileUpdate,
+    db: Session = Depends(get_db)
+):
+    """Update user profile information"""
+    try:
+        user = get_user(db, user_id)
+        if not user:
+            raise HTTPException(status_code=404, detail="User not found")
+
+        # Build update kwargs from provided fields
+        update_kwargs = {}
+        if profile_update.full_name is not None:
+            update_kwargs['full_name'] = profile_update.full_name
+        if profile_update.phone is not None:
+            update_kwargs['phone'] = profile_update.phone
+        if profile_update.default_optimization_goal is not None:
+            # Convert Pydantic enum to SQLAlchemy enum
+            update_kwargs['default_optimization_goal'] = OptimizationGoalEnum(
+                profile_update.default_optimization_goal.value
+            )
+
+        if update_kwargs:
+            updated_user = update_user(db, user_id, **update_kwargs)
+            if not updated_user:
+                raise HTTPException(status_code=500, detail="Failed to update user")
+            user = updated_user
+
+        return {
+            "user_id": user.user_id,
+            "email": user.email,
+            "full_name": user.full_name,
+            "phone": user.phone,
+            "default_optimization_goal": user.default_optimization_goal.value if user.default_optimization_goal else None,
+            "created_at": user.created_at.isoformat(),
+            "is_active": user.is_active,
+            "message": "Profile updated successfully"
         }
 
     except HTTPException:

@@ -1,13 +1,23 @@
 import React, { useState, useEffect } from 'react';
-import { View, Text, StyleSheet, ScrollView, TouchableOpacity, ActivityIndicator, RefreshControl } from 'react-native';
+import { View, Text, StyleSheet, ScrollView, TouchableOpacity, ActivityIndicator, RefreshControl, Modal, Alert } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { API } from '../services/api';
+
+// Optimization goal options
+const OPTIMIZATION_GOALS = [
+  { value: 'cash_back', label: 'Cash Back' },
+  { value: 'travel_points', label: 'Travel Points' },
+  { value: 'specific_discounts', label: 'Specific Discounts' },
+  { value: 'balanced', label: 'Balanced' },
+];
 
 // Accept the 'onLogout' prop passed from App.js
 export default function ProfileScreen({ onLogout }) {
   const [profile, setProfile] = useState(null);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
+  const [showGoalPicker, setShowGoalPicker] = useState(false);
+  const [updating, setUpdating] = useState(false);
 
   const fetchProfileData = async () => {
     try {
@@ -28,6 +38,35 @@ export default function ProfileScreen({ onLogout }) {
     setRefreshing(true);
     await fetchProfileData();
     setRefreshing(false);
+  };
+
+  const updateOptimizationGoal = async (newGoal) => {
+    setUpdating(true);
+    try {
+      const userId = await AsyncStorage.getItem('userId');
+      if (userId) {
+        await API.updateUserProfile(userId, {
+          default_optimization_goal: newGoal
+        });
+        // Update local state
+        setProfile(prev => ({
+          ...prev,
+          default_optimization_goal: newGoal
+        }));
+        setShowGoalPicker(false);
+        Alert.alert('Success', 'Optimization goal updated successfully');
+      }
+    } catch (error) {
+      console.error('Error updating optimization goal:', error);
+      Alert.alert('Error', 'Failed to update optimization goal');
+    } finally {
+      setUpdating(false);
+    }
+  };
+
+  const getGoalLabel = (value) => {
+    const goal = OPTIMIZATION_GOALS.find(g => g.value === value);
+    return goal ? goal.label : value?.replace('_', ' ').toUpperCase() || 'Not Set';
   };
 
   useEffect(() => {
@@ -89,16 +128,64 @@ export default function ProfileScreen({ onLogout }) {
                     <Text style={styles.infoValue}>{profile.phone}</Text>
                   </View>
                 )}
-                {profile.default_optimization_goal && (
-                  <View style={styles.infoRow}>
-                    <Text style={styles.infoLabel}>Default Goal</Text>
+                <TouchableOpacity
+                  style={styles.infoRow}
+                  onPress={() => setShowGoalPicker(true)}
+                >
+                  <Text style={styles.infoLabel}>Optimization Goal</Text>
+                  <View style={styles.editableValue}>
                     <Text style={styles.infoValue}>
-                      {profile.default_optimization_goal.replace('_', ' ').toUpperCase()}
+                      {getGoalLabel(profile.default_optimization_goal)}
                     </Text>
+                    <Text style={styles.editIcon}>Edit</Text>
                   </View>
-                )}
+                </TouchableOpacity>
               </View>
             )}
+
+            {/* Goal Picker Modal */}
+            <Modal
+              visible={showGoalPicker}
+              transparent={true}
+              animationType="slide"
+              onRequestClose={() => setShowGoalPicker(false)}
+            >
+              <View style={styles.modalOverlay}>
+                <View style={styles.modalContent}>
+                  <Text style={styles.modalTitle}>Select Optimization Goal</Text>
+                  {OPTIMIZATION_GOALS.map((goal) => (
+                    <TouchableOpacity
+                      key={goal.value}
+                      style={[
+                        styles.goalOption,
+                        profile?.default_optimization_goal === goal.value && styles.selectedGoal
+                      ]}
+                      onPress={() => updateOptimizationGoal(goal.value)}
+                      disabled={updating}
+                    >
+                      <Text style={[
+                        styles.goalOptionText,
+                        profile?.default_optimization_goal === goal.value && styles.selectedGoalText
+                      ]}>
+                        {goal.label}
+                      </Text>
+                      {profile?.default_optimization_goal === goal.value && (
+                        <Text style={styles.checkmark}>✓</Text>
+                      )}
+                    </TouchableOpacity>
+                  ))}
+                  <TouchableOpacity
+                    style={styles.cancelButton}
+                    onPress={() => setShowGoalPicker(false)}
+                  >
+                    <Text style={styles.cancelButtonText}>Cancel</Text>
+                  </TouchableOpacity>
+                  {updating && (
+                    <ActivityIndicator style={styles.modalLoader} color="#4A90E2" />
+                  )}
+                </View>
+              </View>
+            </Modal>
 
             <TouchableOpacity style={styles.logoutButton} onPress={onLogout}>
               <Text style={styles.logoutButtonText}>Logout</Text>
@@ -188,5 +275,74 @@ const styles = StyleSheet.create({
     fontSize: 14,
     color: '#333',
     fontWeight: '600',
+  },
+  editableValue: {
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  editIcon: {
+    fontSize: 12,
+    color: '#4A90E2',
+    marginLeft: 8,
+    fontWeight: '600',
+  },
+  modalOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0, 0, 0, 0.5)',
+    justifyContent: 'flex-end',
+  },
+  modalContent: {
+    backgroundColor: '#fff',
+    borderTopLeftRadius: 20,
+    borderTopRightRadius: 20,
+    padding: 20,
+    paddingBottom: 40,
+  },
+  modalTitle: {
+    fontSize: 20,
+    fontWeight: 'bold',
+    color: '#333',
+    textAlign: 'center',
+    marginBottom: 20,
+  },
+  goalOption: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    padding: 16,
+    borderRadius: 12,
+    marginBottom: 8,
+    backgroundColor: '#F5F7FA',
+  },
+  selectedGoal: {
+    backgroundColor: '#E8F4FD',
+    borderWidth: 1,
+    borderColor: '#4A90E2',
+  },
+  goalOptionText: {
+    fontSize: 16,
+    color: '#333',
+  },
+  selectedGoalText: {
+    color: '#4A90E2',
+    fontWeight: '600',
+  },
+  checkmark: {
+    fontSize: 18,
+    color: '#4A90E2',
+    fontWeight: 'bold',
+  },
+  cancelButton: {
+    padding: 16,
+    alignItems: 'center',
+    marginTop: 8,
+  },
+  cancelButtonText: {
+    fontSize: 16,
+    color: '#666',
+    fontWeight: '600',
+  },
+  modalLoader: {
+    marginTop: 10,
   },
 });
