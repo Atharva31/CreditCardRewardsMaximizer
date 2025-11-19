@@ -33,6 +33,7 @@ export default function HomeScreen({ navigation }) {
   const [loadingCards, setLoadingCards] = useState(false);
 
   const fetchUserData = async () => {
+    let userHasCards = false;
     try {
       const userId = await AsyncStorage.getItem('userId');
       const fullName = await AsyncStorage.getItem('userFullName');
@@ -46,7 +47,8 @@ export default function HomeScreen({ navigation }) {
         try {
           const walletResponse = await API.getWalletCards(userId);
           const walletCards = Array.isArray(walletResponse.data) ? walletResponse.data : [];
-          setHasCards(walletCards.length > 0);
+          userHasCards = walletCards.length > 0;
+          setHasCards(userHasCards);
           setCardsError(false);
         } catch (err) {
           // If 404, user has no cards - this is normal for new users
@@ -73,9 +75,10 @@ export default function HomeScreen({ navigation }) {
     } finally {
       setLoading(false);
     }
+    return userHasCards;
   };
 
-  const requestLocationPermissionAndFetchRecommendations = async () => {
+  const requestLocationPermissionAndFetchRecommendations = async (userHasCards = null) => {
     try {
       setLoadingLocation(true);
       setLocationError(null);
@@ -83,6 +86,15 @@ export default function HomeScreen({ navigation }) {
       const userId = await AsyncStorage.getItem('userId');
       if (!userId) {
         console.log('No user ID found, skipping location request');
+        return;
+      }
+
+      // Skip location recommendations if user has no cards
+      // Use passed parameter if available, otherwise fall back to state
+      const hasCardsToCheck = userHasCards !== null ? userHasCards : hasCards;
+      if (!hasCardsToCheck) {
+        console.log('User has no cards, skipping location recommendations');
+        setNearbyRecommendations([]);
         return;
       }
 
@@ -133,6 +145,13 @@ export default function HomeScreen({ navigation }) {
 
     } catch (error) {
       console.error('Error with location recommendations:', error);
+      // Check if error is due to no cards - don't show as error since it's expected
+      const errorMessage = error.response?.data?.detail || error.message || '';
+      if (errorMessage.includes('no credit cards')) {
+        console.log('User has no cards, skipping location recommendations');
+        setNearbyRecommendations([]);
+        return;
+      }
       setLocationError('Failed to load nearby recommendations');
     } finally {
       setLoadingLocation(false);
@@ -333,9 +352,13 @@ export default function HomeScreen({ navigation }) {
   };
 
   useEffect(() => {
-    fetchUserData();
-    // Request location permission and fetch recommendations on mount
-    requestLocationPermissionAndFetchRecommendations();
+    const initializeHomeScreen = async () => {
+      const userHasCards = await fetchUserData();
+      // Request location permission and fetch recommendations after user data is loaded
+      // Pass the result directly to avoid state timing issues
+      await requestLocationPermissionAndFetchRecommendations(userHasCards);
+    };
+    initializeHomeScreen();
   }, []);
 
   return (

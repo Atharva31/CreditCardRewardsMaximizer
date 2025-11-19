@@ -180,7 +180,11 @@ export default function TransactionScreen() {
 
   return (
     <SafeAreaView style={styles.container}>
-      <ScrollView showsVerticalScrollIndicator={false}>
+      <ScrollView
+        showsVerticalScrollIndicator={false}
+        keyboardShouldPersistTaps="handled"
+        nestedScrollEnabled={true}
+      >
         {/* Header */}
         <View style={styles.header}>
           <Text style={styles.title}>New Transaction</Text>
@@ -195,7 +199,6 @@ export default function TransactionScreen() {
             value={merchant}
             onMerchantSelect={(merchantName) => setMerchant(merchantName)}
             onCategorySelect={(categoryId) => setSelectedCategory(categoryId)}
-            apiUrl="http://localhost:8000" // Change for production
           />
           <Text style={styles.hint}>
             Start typing to search merchants
