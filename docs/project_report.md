@@ -1,30 +1,32 @@
-# Credit Card Rewards Maximizer: AI-Powered Optimization System
+---
+title: "Credit Card Rewards Maximizer: AI-Powered Optimization System"
+documentclass: article
+classoption: twocolumn
+geometry: margin=0.75in
+---
+
 
 ## Authors
 
-**[Student Name 1]**  
+**Eugene Lacatis**  
 Master's in Software Engineering  
 San Jose State University  
-San Jose, United States  
-[email@sjsu.edu]
+eugene.lacatis@sjsu.edu
 
-**[Student Name 2]**  
+**Irwin Salamanca**  
 Master's in Software Engineering  
-San Jose State University  
-San Jose, United States  
-[email@sjsu.edu]
+San Jose State University   
+irwin.salamanca@sjsu.edu
 
-**[Student Name 3]**  
+**Matt Tang**  
 Master's in Software Engineering  
 San Jose State University  
-San Jose, United States  
-[email@sjsu.edu]
+matthew.tang@sjsu.edu
 
-**[Student Name 4]**  
+**Atharva Prasanna Mokashi**  
 Master's in Software Engineering  
 San Jose State University  
-San Jose, United States  
-[email@sjsu.edu]
+atharvaprasanna.mokashi@sjsu.edu
 
 ---
 
@@ -70,6 +72,7 @@ The backend is powered by FastAPI, a modern Python web framework known for its h
 - **Async Support**: Asynchronous request handling for improved performance
 - **CORS Middleware**: Configured for cross-origin requests from mobile clients
 - **Health Monitoring**: Health check endpoints for deployment monitoring
+- **Observability**: Integrated Prometheus metrics for tracking system performance and user engagement
 
 The backend architecture follows clean separation of concerns with dedicated modules for database operations (CRUD), AI agents, data models, and API routes.
 
@@ -295,21 +298,21 @@ pytest was used for comprehensive backend testing with the following coverage:
 
 ### B. Frontend Testing
 
-Frontend testing strategies:
+Frontend testing focused on manual verification and component validation:
 
-**Component Testing:**
-- Screen rendering validation
-- User interaction handling
-- Navigation flow testing
-- Form input validation
-- Error state display
+**Component Validation:**
+- Screen rendering verification across iOS, Android, and Web
+- User interaction handling (taps, swipes, inputs)
+- Navigation flow testing between tabs and stacks
+- Form input validation and error state display
+- Responsive layout adjustments
 
-**API Integration Testing:**
-- Network request handling
-- Response parsing and error handling
-- Loading state management
-- Offline behavior
-- Retry logic for failed requests
+**System Integration Testing:**
+- End-to-end testing using Expo Go on physical devices
+- Network request handling and error recovery
+- Loading state management during AI inference
+- Offline behavior and reconnection handling
+- Real-time recommendation display verification
 
 ## VII. API Security
 
@@ -348,7 +351,7 @@ All user inputs are validated before processing:
 User financial data is protected:
 
 - **Database Encryption**: PostgreSQL supports encryption at rest
-- **HTTPS Communication**: All API calls encrypted in transit
+- **HTTPS Communication**: All API calls encrypted in transit (Production)
 - **No Third-Party Sharing**: User data never shared with external services
 - **Minimal Data Collection**: Only necessary information stored
 - **User Data Ownership**: Users can export or delete their data
@@ -376,7 +379,7 @@ Future enhancements could include machine learning models for spending predictio
 
 ## Acknowledgment
 
-We would like to express our sincere gratitude to all those who have contributed to the successful completion of this project. Special thanks to [Professor Name] for continuous guidance, invaluable feedback, and support throughout the development process.
+We would like to express our sincere gratitude to all those who have contributed to the successful completion of this project. Special thanks to **Prof. Rakesh Ranjan** for continuous guidance, invaluable feedback, and support throughout the development process.
 
 We also acknowledge the valuable suggestions from our peers, which have significantly enhanced the quality of this work. Our appreciation extends to the developers and engineers behind the technologies used in this project, including React Native, FastAPI, PostgreSQL, Groq, Meta AI (Llama 3), LangChain, and Docker, whose platforms and tools have been fundamental in building this system.
 
