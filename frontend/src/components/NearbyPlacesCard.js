@@ -68,11 +68,12 @@ const NearbyPlacesCard = ({ recommendations, onRefresh, onRecommendationPress })
               <Text style={styles.cardName} numberOfLines={1}>
                 {rec.recommended_card.card_name}
               </Text>
+              <Text style={styles.spendContext}>On spend of $50:</Text>
               <View style={styles.rewardRow}>
                 <Text style={styles.rewardAmount}>
                   ${rec.expected_reward.toFixed(2)}
                 </Text>
-                <Text style={styles.rewardLabel}> in rewards</Text>
+                <Text style={styles.rewardLabel}> estimated rewards</Text>
               </View>
               <Text style={styles.explanation} numberOfLines={2}>
                 {rec.recommended_card.explanation}
@@ -194,6 +195,12 @@ const styles = StyleSheet.create({
     fontWeight: 'bold',
     color: '#4A90E2',
     marginBottom: 6,
+  },
+  spendContext: {
+    fontSize: 11,
+    color: '#888',
+    marginBottom: 4,
+    fontStyle: 'italic',
   },
   rewardRow: {
     flexDirection: 'row',

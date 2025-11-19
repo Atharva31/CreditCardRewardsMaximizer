@@ -270,24 +270,33 @@ class LocationService:
 
     def _map_osm_tags_to_category(self, tags: Dict) -> str:
         """Map OpenStreetMap tags to our credit card categories"""
-        # Check amenity tags
+        # Check amenity tags - expanded dining list
         amenity = tags.get('amenity', '')
-        if amenity in ['restaurant', 'cafe', 'fast_food', 'bar', 'pub', 'food_court']:
+        if amenity in ['restaurant', 'cafe', 'fast_food', 'bar', 'pub', 'food_court',
+                       'ice_cream', 'bistro', 'coffee_shop', 'bakery', 'deli']:
             return 'dining'
         if amenity == 'fuel':
             return 'gas'
-        if amenity == 'cinema':
+        if amenity in ['cinema', 'theatre', 'nightclub']:
             return 'entertainment'
 
         # Check shop tags
         shop = tags.get('shop', '')
-        if shop in ['supermarket', 'grocery', 'convenience']:
+        if shop in ['supermarket', 'grocery', 'convenience', 'greengrocer', 'butcher', 'deli']:
             return 'groceries'
-        if shop in ['mall', 'department_store', 'clothes', 'electronics', 'shoes', 'jewelry']:
+        if shop in ['mall', 'department_store', 'clothes', 'electronics', 'shoes', 'jewelry',
+                    'boutique', 'fashion', 'sporting_goods', 'books', 'gift']:
             return 'shopping'
+        # Some food shops could be dining
+        if shop in ['bakery', 'coffee', 'confectionery', 'pastry']:
+            return 'dining'
+
+        # Check cuisine tag - if it has a cuisine, it's dining
+        if tags.get('cuisine'):
+            return 'dining'
 
         # Check tourism tags
-        if tags.get('tourism') == 'hotel':
+        if tags.get('tourism') in ['hotel', 'motel', 'hostel', 'guest_house']:
             return 'travel'
 
         # Check aeroway tags
@@ -295,8 +304,16 @@ class LocationService:
             return 'travel'
 
         # Check leisure tags
-        if tags.get('leisure') in ['bowling_alley', 'amusement_arcade']:
+        if tags.get('leisure') in ['bowling_alley', 'amusement_arcade', 'stadium', 'sports_centre']:
             return 'entertainment'
+
+        # Check name for common dining keywords as fallback
+        name = tags.get('name', '').lower()
+        dining_keywords = ['restaurant', 'cafe', 'coffee', 'pizza', 'burger', 'grill',
+                          'kitchen', 'bistro', 'diner', 'eatery', 'food', 'taco', 'sushi',
+                          'thai', 'chinese', 'indian', 'mexican', 'italian', 'bakery']
+        if any(keyword in name for keyword in dining_keywords):
+            return 'dining'
 
         return 'other'
 
