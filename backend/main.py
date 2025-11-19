@@ -532,27 +532,27 @@ async def get_card_recommendation(
         user = get_user(db, request.user_id)
         if not user:
             raise HTTPException(status_code=404, detail="User not found")
-        
-        # Get user's active credit cards from database
-        user_cards = get_user_cards(db, request.user_id, active_only=True)
-        if not user_cards:
+
+        # Get user's active credit cards from wallet (UserCreditCard + CreditCard details)
+        user_cards_with_details = get_user_cards_with_details(db, request.user_id, active_only=True)
+        if not user_cards_with_details:
             raise HTTPException(
                 status_code=404,
                 detail="No active credit cards found for user"
             )
-        
-        # Convert SQLAlchemy models to dictionaries for AI agent
+
+        # Convert to format expected by AI agent
         user_cards_dict = [
             {
-                "card_id": card.card_id,
-                "card_name": card.card_name,
-                "issuer": card.issuer.value,
-                "cash_back_rate": card.cash_back_rate,
-                "points_multiplier": card.points_multiplier,
-                "annual_fee": card.annual_fee,
-                "benefits": card.benefits or []
+                "card_id": card["card_id"],
+                "card_name": card.get("nickname") or card["card_name"],
+                "issuer": card["issuer"],
+                "cash_back_rate": card["cash_back_rate"],
+                "points_multiplier": card["points_multiplier"],
+                "annual_fee": card["annual_fee"],
+                "benefits": card.get("benefits") or []
             }
-            for card in user_cards
+            for card in user_cards_with_details
         ]
         
         # Prepare transaction data for AI with sensible defaults
@@ -596,17 +596,18 @@ async def get_card_recommendation(
                 cash_back_earned = float(card_dict.get("cash_back_earned", 0) or 0)
 
                 if points_earned > 0:
-                    points_per_dollar = points_earned / txn_amount
-                    estimated_value = f"{points_per_dollar:.1f} points per $1"
+                    # Show actual points earned for this transaction
+                    estimated_value = f"{points_earned:.0f} points"
                 elif cash_back_earned > 0:
-                    cash_back_rate = cash_back_earned / txn_amount
-                    estimated_value = f"{cash_back_rate * 100:.1f}% cash back"
+                    # Show actual cash back earned for this transaction
+                    estimated_value = f"${cash_back_earned:.2f}"
                 else:
                     estimated_value = f"Optimized for {category}"
             else:
                 estimated_value = f"Optimized for {category}"
 
             return RecommendedCardSimple(
+                card_id=card_dict.get("card_id", ""),
                 card_name=card_dict["card_name"],
                 reason=reason,
                 estimated_value=estimated_value,

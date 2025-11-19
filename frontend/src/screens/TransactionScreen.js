@@ -63,6 +63,10 @@ export default function TransactionScreen() {
       Alert.alert('Error', 'Please enter a valid amount');
       return;
     }
+    if (!userId) {
+      Alert.alert('Error', 'Please log in to get recommendations');
+      return;
+    }
 
     setLoading(true);
 
@@ -70,7 +74,7 @@ export default function TransactionScreen() {
       console.log('Sending request to API...');
 
       const transactionData = {
-        user_id: 'user123',
+        user_id: userId,
         merchant: merchant.trim(),
         amount: parseFloat(amount),
         category: selectedCategory,
@@ -84,10 +88,28 @@ export default function TransactionScreen() {
 
     } catch (error) {
       console.error('API Error:', error);
-      Alert.alert(
-        'Connection Error',
-        'Could not connect to server. Make sure backend is running.\n\nError: ' + error.message
-      );
+
+      // Check for specific error messages
+      const errorMessage = error.message || '';
+
+      if (errorMessage.includes('No active credit cards')) {
+        Alert.alert(
+          'No Cards Found',
+          'You need to add credit cards to your wallet before getting recommendations. Go to the Cards tab to add your cards.',
+          [{ text: 'OK' }]
+        );
+      } else if (errorMessage.includes('User not found')) {
+        Alert.alert(
+          'Account Error',
+          'Your account was not found. Please try logging in again.',
+          [{ text: 'OK' }]
+        );
+      } else {
+        Alert.alert(
+          'Connection Error',
+          'Could not connect to server. Make sure backend is running.\n\nError: ' + errorMessage
+        );
+      }
     } finally {
       setLoading(false);
     }
@@ -132,14 +154,10 @@ export default function TransactionScreen() {
                 <Text style={styles.cardName}>{card.card_name}</Text>
 
                 <View style={styles.valueBox}>
-                  <Text style={styles.valueLabel}>Estimated Value</Text>
+                  <Text style={styles.valueLabel}>You'll Earn</Text>
                   <Text style={styles.valueAmount}>
                     {card.estimated_value}
                   </Text>
-                </View>
-
-                <View style={styles.explanationBox}>
-                  <Text style={styles.explanationText}>{card.reason}</Text>
                 </View>
               </View>
 
