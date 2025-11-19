@@ -153,6 +153,8 @@ export default function TransactionScreen() {
       const amountValue = amount;
       const cardName = card.card_name;
 
+      // Reset saving state before closing modal
+      setSavingTransaction(false);
       setShowResult(false);
       setMerchant('');
       setAmount('');
@@ -171,9 +173,9 @@ export default function TransactionScreen() {
     } catch (error) {
       console.error('Error saving transaction:', error);
 
-      // Close modal first, then show error
-      setShowResult(false);
+      // Reset saving state and close modal first, then show error
       setSavingTransaction(false);
+      setShowResult(false);
 
       setTimeout(() => {
         Alert.alert(
@@ -181,10 +183,7 @@ export default function TransactionScreen() {
           'Failed to save transaction. Please try again.\n\nError: ' + error.message
         );
       }, 300);
-      return;
     }
-
-    setSavingTransaction(false);
   };
 
   const CategoryButton = ({ category }) => {
