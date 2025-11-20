@@ -152,32 +152,44 @@ export default function TransactionScreen() {
 
       await API.createTransaction(transactionData);
 
-      // Reset all states
-      setSavingTransaction(false);
+      // First close the modal, then reset states after a delay
       setShowResult(false);
-      setMerchant('');
-      setAmount('');
-      setRecommendation(null);
-      setSelectedCard(null);
 
-      // Show alert after modal is closed
-      Alert.alert(
-        'Transaction Added',
-        `Successfully added ${merchantName} transaction for $${amountValue.toFixed(2)} using ${cardName}`,
-        [{ text: 'OK' }]
-      );
+      // Use setTimeout to allow modal to close before resetting other states
+      setTimeout(() => {
+        setSavingTransaction(false);
+        setMerchant('');
+        setAmount('');
+        setRecommendation(null);
+        setSelectedCard(null);
+
+        // Show success alert after states are reset
+        Alert.alert(
+          'Transaction Added',
+          `Successfully added ${merchantName} transaction for $${amountValue.toFixed(2)} using ${cardName}`,
+          [{ text: 'OK' }]
+        );
+      }, 300);
 
     } catch (error) {
       console.error('Error saving transaction:', error);
 
-      // Reset saving state and close modal
-      setSavingTransaction(false);
-      setShowResult(false);
+      const errorMessage = error.message || 'Unknown error';
 
-      Alert.alert(
-        'Error',
-        'Failed to save transaction. Please try again.\n\nError: ' + error.message
-      );
+      // Reset saving state first
+      setSavingTransaction(false);
+
+      // Close modal after a brief delay, then show error
+      setTimeout(() => {
+        setShowResult(false);
+
+        setTimeout(() => {
+          Alert.alert(
+            'Error',
+            'Failed to save transaction. Please try again.\n\nError: ' + errorMessage
+          );
+        }, 300);
+      }, 100);
     }
   };
 
